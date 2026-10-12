@@ -387,9 +387,16 @@ function kinetics(p) {
   const M = p.M0 * Math.exp(-p.Qgb * 1e3 / RT), d0 = p.d0_nm * 1e-9, Kgg = 4 * M * p.gamma_gb;
   const dFree = Math.sqrt(d0 * d0 + Kgg * t), dZ = p.fp > 0 ? 4 * p.rp_nm * 1e-9 / (3 * p.fp) : Infinity;
   const ts = N.linspace(0, t, 120);
-  // pinned growth: d(d²)/dt = 4Mγ(1 − d/d_Z), integrated in y = d²
-  const pin = N.rk4((_, y) => [Number.isFinite(dZ) ? Kgg * Math.max(0, 1 - Math.sqrt(Math.max(y[0], 0)) / dZ) : Kgg], [d0 * d0], 0, t, 600);
-  const dPin = N.linspace(0, t, 120).map(tv => Math.sqrt(Math.max(0, N.interp1(pin.t, pin.y.map(v => v[0]), tv)))), dEnd = dPin[dPin.length - 1];
+  // pinned growth dd/dt = 2Mγ(1/d − 1/d_Z): exact implicit solution −d_Z[(d − d₀) + d_Z·ln((d_Z − d)/(d_Z − d₀))] = 2Mγt,
+  // solved by bisection in ln u, u = (d_Z − d)/(d_Z − d₀) ∈ (0, 1]; it cannot overshoot the limit for any hold time.
+  const pinAt = tv => {
+    if (!Number.isFinite(dZ)) return Math.sqrt(d0 * d0 + Kgg * tv);
+    if (d0 >= dZ || tv <= 0) return d0;
+    const span = dZ - d0, g = lu => -dZ * (span * (1 - Math.exp(lu)) + dZ * lu) - 0.5 * Kgg * tv; // decreasing in ln u
+    let lo = -700, hi = 0; for (let i = 0; i < 80; i++) { const mid = 0.5 * (lo + hi); if (g(mid) > 0) lo = mid; else hi = mid; }
+    return dZ - span * Math.exp(0.5 * (lo + hi));
+  };
+  const dPin = ts.map(pinAt), dEnd = dPin[dPin.length - 1];
   const D = p.D0 * Math.exp(-p.Qd * 1e3 / RT), Vm = p.Vm * 1e-6, Klsw = 8 * p.gamma_int * D * p.c_sol * Vm * Vm / (9 * RT), r0 = p.r0_nm * 1e-9, rEnd = Math.cbrt(r0 ** 3 + Klsw * t);
   const Om = Vm / N.N_A, kT = N.K_B * TK, Dp = p.dp_nm * 1e-9, gs = p.gamma_gb;
   const S = { vol: { n: 5, m: 3, B: 80 * D * gs * Om / kT, dens: true, name: 'volume diffusion' }, gb: { n: 6, m: 4, B: 20 * 5e-10 * D * gs * Om / kT, dens: true, name: 'grain-boundary diffusion (δ = 0.5 nm)' }, surf: { n: 7, m: 4, B: 56 * D * gs * Math.pow(Om, 4 / 3) / kT, dens: false, name: 'surface diffusion' } }[p.sinter];
@@ -403,7 +410,7 @@ function kinetics(p) {
   return {
     summary: `At ${F(p.T_C)} °C for ${F(p.time_h)} h: grains grow from ${F(p.d0_nm)} to ${F(dEnd * 1e9, 3)} nm (${F(dFree * 1e9, 3)} nm without pinning; Zener limit ${Number.isFinite(dZ) ? F(dZ * 1e9, 3) + ' nm' : 'none'}), precipitates coarsen from ${F(p.r0_nm)} to ${F(rEnd * 1e9, 3)} nm radius (LSW), the sinter neck ratio reaches ${F(xr, 3)} by ${S.name} with relative density ${F(rhoEnd, 3)}, and the JMAK transformed fraction is ${F(Xend, 3)}.`,
     kpis: [
-      kpi('d_final', 'Grain size after hold', dEnd, 'm', `Parabolic normal grain growth with Zener drag, d(d²)/dt = 4Mγ(1 − d/d_Z), using M = ${F(M, 3)} m⁴/(J·s). Without particles the result would be ${F(dFree * 1e9, 3)} nm.`, dEnd < 3 * d0),
+      kpi('d_final', 'Grain size after hold', dEnd, 'm', `Parabolic normal grain growth with Zener drag, dd/dt = 2Mγ(1/d − 1/d_Z), using M = ${F(M, 3)} m⁴/(J·s). Without particles the result would be ${F(dFree * 1e9, 3)} nm.`, dEnd < 3 * d0),
       kpi('d_zener', 'Zener limiting grain size', Number.isFinite(dZ) ? dZ : 0, 'm', 'Zener–Smith limit D = 4r/(3f) for the given particle radius and fraction; grain growth stagnates when the mean size approaches it. Zero means no particles.', null),
       kpi('r_lsw', 'Precipitate radius after hold', rEnd, 'm', `LSW diffusion-limited coarsening r³ − r₀³ = Kt with K = 8γDc∞Vₘ²/(9RT) = ${F(Klsw, 3)} m³/s and D = ${F(D, 3)} m²/s.`, rEnd < 2 * r0),
       kpi('neck', 'Sinter neck ratio X/D', xr, '–', `Initial-stage neck growth (X/D)^${S.n} = B·t/D^${S.m} for ${S.name}. The model is valid up to about 0.3 and is capped at 0.5.`, xr < 0.3),
@@ -440,7 +447,7 @@ function kinetics(p) {
       rec('medium', `Herring scaling: halving the particle size shortens the time for the same neck ratio by a factor ${F(2 ** S.m, 3)}, allowing a lower sintering temperature and a substantial saving in furnace energy.`, `Exponent m = ${S.m} of the selected mechanism.`, true),
     ],
     publish: { 'micro.grain_size': dEnd, 'geom.porosity': 1 - rhoEnd, 'geom.rel_density': rhoEnd, 'prop.D_diff': D, 'rxn.conversion': Xend, 'micro.precipitate_radius': rEnd },
-    numerics: { method: 'Closed-form kinetic laws; RK4 integration of the pinned grain-growth ODE', dof: 1, steps: 600, iterations: 600, residual: 0, notes: 'Isothermal hold; no heating/cooling ramps.' },
+    numerics: { method: 'Closed-form kinetic laws; implicit analytical solution of the pinned grain-growth ODE solved by bisection', dof: 1, steps: 120, iterations: 120 * 80, residual: 0, notes: 'Isothermal hold; no heating/cooling ramps.' },
   };
 }
 

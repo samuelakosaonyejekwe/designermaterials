@@ -25,7 +25,7 @@ const KEYS = Object.keys(A.CRYSTALS);
 // Pair-potential presets. LJ: ε (eV), σ (Å). Morse: D (eV), α (1/Å), r0 (Å) — classic lattice-property-fitted parameters for
 // cubic metals. a: experimental fcc lattice parameter (Å); nuMax: highest measured phonon frequency (THz); thD: Debye temperature (K).
 const POT = {
-  Ar: { name: 'Argon — Lennard-Jones', type: 'lj', e: 0.0104, r: 3.405, a: 5.31, mass: 39.948, nuMax: 2.0, thD: 92 },
+  Ar: { name: 'Argon — Lennard-Jones', type: 'lj', e: 0.010324 /* ε/k_B = 119.8 K */, r: 3.405, a: 5.31, mass: 39.948, nuMax: 2.0, thD: 92 },
   Cu: { name: 'Copper — Morse', type: 'morse', e: 0.3429, al: 1.3588, r: 2.866, a: 3.615, mass: 63.546, nuMax: 7.4, thD: 343 },
   Ag: { name: 'Silver — Morse', type: 'morse', e: 0.3323, al: 1.3690, r: 3.115, a: 4.086, mass: 107.868, nuMax: 5.1, thD: 225 },
   Au: { name: 'Gold — Morse', type: 'morse', e: 0.4753, al: 1.5830, r: 3.024, a: 4.078, mass: 196.967, nuMax: 4.7, thD: 165 },
@@ -146,7 +146,7 @@ function runMD(inp) {
   checks.push(chk('Total-energy conservation (NVE)', ens !== 'nve' || Math.abs(drift) < 2e-3, ens === 'nve' ? `relative drift ${F(drift, 2)} over ${F(tProd, 3)} ps, rms fluctuation ${F(fluct, 2)}` : `not applicable: ${ens} thermostat exchanges energy with a heat bath (drift ${F(drift, 2)})`),
     chk('Temperature near the target', Math.abs(Tm - T) / T < (ens === 'nve' ? 0.25 : 0.1), `⟨T⟩ = ${F(Tm, 4)} K, target ${F(T, 4)} K${ens === 'nve' ? ' (NVE: the temperature drifts from the equilibration value as potential and kinetic energy equilibrate)' : ''}`),
     chk('Momentum conservation', ens === 'langevin' || (() => { let a = 0, b = 0, c = 0; for (let i = 0; i < n; i++) { a += vx[i]; b += vy[i]; c += vz[i]; } return Math.hypot(a, b, c) / n < 1e-6 * sv + 1e-12; })(), ens === 'langevin' ? 'not conserved by construction with a Langevin bath' : 'centre-of-mass velocity stays zero to round-off'),
-    chk('Time step resolves the fastest vibration', dtfs < 0.04 * 2 * PI * Math.sqrt(m / Math.max(d2phiOf(pt)(lj ? 1.1225 * pt.r : pt.r), 1e-9)) * TU, `Δt = ${F(dtfs, 3)} fs; pair oscillation period ≈ ${F(2 * PI * Math.sqrt(m / (2 * d2phiOf(pt)(lj ? 1.1225 * pt.r : pt.r))) * TU, 4)} fs`));
+    chk('Time step resolves the fastest vibration', dtfs < 0.04 * 2 * PI * Math.sqrt(m / Math.max(2 * d2phiOf(pt)(lj ? 1.1225 * pt.r : pt.r), 1e-9)) * TU, `Δt = ${F(dtfs, 3)} fs; pair oscillation period ≈ ${F(2 * PI * Math.sqrt(m / (2 * d2phiOf(pt)(lj ? 1.1225 * pt.r : pt.r))) * TU, 4)} fs`));
   if (ens === 'langevin') warnings.push('Langevin friction damps momentum, so the self-diffusion coefficient is lowered relative to Newtonian dynamics; use NVE production runs for transport coefficients.');
   if (ens === 'berendsen') warnings.push('The Berendsen thermostat does not sample the canonical ensemble exactly (it suppresses kinetic-energy fluctuations); it is intended for equilibration.');
   if (!pbc) warnings.push('For a free cluster the mean-squared displacement includes surface-atom mobility and slow rigid rotation of the whole cluster, so a non-zero "diffusion coefficient" does not by itself indicate melting; use the Lindemann index.');
@@ -425,7 +425,7 @@ function runGraphene(inp, base) {
       kpi('E_M', 'Van Hove singularity (conduction)', eM[1], 'eV', 'Saddle point of the π* band at M, where the density of states diverges logarithmically; it controls the optical absorption peak near 2γ₀.'),
       kpi('E_Mv', 'Van Hove singularity (valence)', eM[0], 'eV', 'Saddle point of the π band at M; equal and opposite to the conduction value when the overlap integral is zero.'),
       kpi('width', 'π band width', eG[1] - eG[0], 'eV', 'Energy span from the bottom of the π band to the top of the π* band at Γ (6γ₀ for s = 0).'),
-      kpi('dos0', 'Density of states at the Dirac point', dos.y[iz], '1/eV per cell', 'Vanishes linearly, g(E) = 2A_c|E|/(πħ²v_F²) per spin; the histogram value is limited by the energy resolution of the k-mesh.'),
+      kpi('dos0', 'Density of states at the Dirac point', dos.y[iz], '1/eV per cell', 'Vanishes linearly, g(E) = A_c|E|/(πħ²v_F²) per spin (two valleys); the histogram value is limited by the energy resolution of the k-mesh.'),
       kpi('a', 'Lattice constant', AG, 'Å', 'Graphene lattice constant √3·a_cc used for the Brillouin zone; K = 4π/3a.'),
     ],
     series: [

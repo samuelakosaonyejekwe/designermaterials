@@ -545,7 +545,7 @@ function esaki(inp) {
       kpi('Vv', 'Valley voltage', ok ? a.Vv : 0, 'V', 'Bias of the current minimum where excess (defect-assisted) current and the rising diffusion current take over.'),
       kpi('Iv', 'Valley current', (ok ? a.Iv : 0) * 1e3, 'mA', 'Minimum current after the peak; it measures the density of gap states that assist tunnelling.'),
       kpi('PVCR', 'Peak-to-valley current ratio', ok ? a.pvcr : 1, '–', 'I_p/I_v of the summed characteristic; about 8–15 for Ge, 3–4 for Si and 10–20 for GaAs Esaki diodes.', ok && a.pvcr > 3),
-      kpi('Rn', 'Minimum negative resistance', Number.isFinite(cc.Rn) ? cc.Rn : 0, 'Ω', 'Reciprocal of the most negative slope; for the pure tunnelling term it is −e²·V_p/I_p ≈ −' + f3(Math.E * Math.E * Vp / Ip) + ' Ω at V = 2V_p.'),
+      kpi('Rn', 'Minimum negative resistance', Number.isFinite(cc.Rn) ? cc.Rn : 0, 'Ω', 'Reciprocal of the most negative slope; for the pure tunnelling term it is −e·V_p/I_p ≈ −' + f3(Math.E * Vp / Ip) + ' Ω at V = 2V_p.'),
       kpi('gmin', 'Most negative conductance', ok ? a.gmin : 0, 'S', 'Minimum dI/dV in the NDR branch, located at about twice the peak voltage for the exponential tunnelling term.', ok),
       kpi('swing', 'NDR voltage window', ok ? a.Vv - a.Vp : 0, 'V', 'Voltage span of the falling branch; it bounds the amplitude of oscillation or the logic swing.'),
       kpi('fr', 'Resistive cut-off frequency', cc.fmax / 1e9, 'GHz', 'Frequency above which the terminal resistance is no longer negative, (1/2π|R_n|C)·√(|R_n|/R_s − 1).'),

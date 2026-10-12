@@ -69,6 +69,7 @@ function sw(inp) {
   for (let j = 0; j < nA; j++) { const l = swLoop(Math.acos((j + 0.5) / nA), hmax, nH); for (let i = 0; i < 2 * nH; i++) ens[i] += l.m[i] / nA; }
   const stE = loopStats(one.h, Array.from(ens), nH), hswAn = 1 / (Math.cos(psi) ** (2 / 3) + Math.sin(psi) ** (2 / 3)) ** 1.5;
   let jmp = 0, hsw = 0; for (let i = 1; i < nH; i++) { const d = one.m[i - 1] - one.m[i]; if (d > jmp) { jmp = d; hsw = Math.abs(one.h[i]); } }
+  if (Math.cos(psi) < 1e-6) { hsw = 0; for (let i = 0; i < nH; i++) if (Math.abs(one.m[i]) < 1 - 1e-6) hsw = Math.max(hsw, Math.abs(one.h[i])); } // hard-axis limit: no irreversible jump, the astroid field is where the reversible rotation saturates
   const V = sphereV(inp.d_nm * 1e-9), sig = m.K * V / (K_B * T), lnft = Math.log(Math.max(inp.tau_m, 1e-8) / 1e-9), red = sig > lnft ? 1 - (lnft / sig) ** 0.77 : 0, HcT = stE.hc * Hk * red;
   const loss = stE.area * 2 * m.K, Pm = loss * inp.f_ac * 1e3 / m.rho, dh = 2 * hmax / (nH - 1);
   if (hmax < 1) W.push('The field sweep does not reach the anisotropy field: particles with easy axes near the field direction do not switch and the loop is a minor loop.');

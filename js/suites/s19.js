@@ -173,9 +173,9 @@ function latticeFE(p) {
   let th = 0, hl = 1; if (p.ctype === 'honeycomb') { th = N.PI / 6; hl = 1; } else if (p.ctype === 'reentrant') { th = -p.th_re * N.PI / 180; hl = p.h_l; if (hl < 2 * Math.sin(-th) + 0.3) { hl = 2 * Math.sin(-th) + 0.3; warnings.push(`h/l raised to ${F(hl, 3)} so that the re-entrant vertices do not overlap (h/l > 2 sin θ).`); } }
   const G = buildLattice(p.ctype, Nx, Ny, a, th, hl), nodes = G.nodes, edges = G.edges, L0 = G.info.l; let t = p.t_strut;
   if (t > 0.3 * L0) { t = 0.3 * L0; warnings.push(`Member thickness limited to ${F(t, 3)} m (30 % of the member length): thicker members are not beams and need a continuum model.`); }
-  const A = t * b, I = b * t ** 3 / 12, xs = nodes.map(q => q[0]), ys = nodes.map(q => q[1]), xmin = N.minOf(xs), xmax = N.maxOf(xs), ymin = N.minOf(ys), ymax = N.maxOf(ys), H = ymax - ymin, Wd = xmax - xmin, tol = 1e-6 * a;
-  const bot = [], top = []; nodes.forEach((q, i) => { if (q[1] < ymin + tol) bot.push(i); if (q[1] > ymax - tol) top.push(i); });
-  const span = arr => N.maxOf(arr.map(i => xs[i])) - N.minOf(arr.map(i => xs[i])), trib = arr => arr.length > 1 ? span(arr) * arr.length / (arr.length - 1) : a, Wt = trib(top);
+  const A = t * b, I = b * t ** 3 / 12, xs = nodes.map(q => q[0]), ys = nodes.map(q => q[1]), xmin = N.minOf(xs), xmax = N.maxOf(xs), ymin = N.minOf(ys), hex = p.ctype === 'honeycomb' || p.ctype === 'reentrant', ymax = hex ? ymin + Ny * G.info.ch : N.maxOf(ys) /* loaded line = whole number of cell periods (re-entrant vertices protrude above it) */, H = ymax - ymin, Wd = xmax - xmin, tol = 1e-6 * a;
+  const bot = [], top = []; nodes.forEach((q, i) => { if (q[1] < ymin + tol) bot.push(i); if (Math.abs(q[1] - ymax) < tol) top.push(i); });
+  const span = arr => N.maxOf(arr.map(i => xs[i])) - N.minOf(arr.map(i => xs[i])), trib = arr => arr.length > 1 ? span(arr) * arr.length / (arr.length - 1) : a, Wt = p.ctype === 'square' ? trib(top) : Nx * a; // load-bearing width: Nx + 1 full columns for the square grid, Nx cell widths otherwise (end nodes of hexagonal and triangular rows are half-connected)
   const mid = arr => arr.reduce((bst, i) => Math.abs(xs[i] - (xmin + xmax) / 2) < Math.abs(xs[bst] - (xmin + xmax) / 2) ? i : bst, arr[0]);
   const eps = p.strain / 100, fix = [], load = []; let delta = 0, Fapp = 0;
   if (p.lcase === 'bend3') { const lft = bot.reduce((m, i) => xs[i] < xs[m] ? i : m, bot[0]), rgt = bot.reduce((m, i) => xs[i] > xs[m] ? i : m, bot[0]); fix.push([lft, 0, 0], [lft, 1, 0], [rgt, 1, 0]); Fapp = p.F_load; load.push([mid(top), 1, -Fapp]); }

@@ -15,9 +15,12 @@ Physics-based design, simulation, fabrication, optimisation and reverse engineer
 - **Data portal** — CSV, TSV, instrument exports, Excel, JSON, XML, YAML, Touchstone and more.
 - **Credibility gates** — results are labelled by the evidence behind them. A converged calculation is never presented as experimentally validated.
 
-## Honest scope
+## Evidence and fidelity
 
-The solvers are analytical, reduced-order and small-grid numerical models chosen to run on any device, including phones. They are engineering predictions for design, screening and planning; they do not replace calibrated high-fidelity simulation or experiment. Where a high-fidelity external solver is the right tool, the platform exports ready-to-run input decks and geometry. Proprietary CAD formats are recognised and inventoried, with guidance on the neutral export to use.
+- **Reference benchmarks.** Every suite ships independent reference results — exact analytical solutions, handbook and measured data, published numerical benchmarks — and re-runs them on the user's device (*Validation benchmarks* page, and the Credibility tab of each suite). `node tests/benchmarks.mjs` runs all of them.
+- **Two fidelity levels.** Interactive runs use analytical, reduced-order and small-grid models sized for any device. Long simulations can run at full resolution in a background worker: the hydrothermal ZnO reactor runs on the case-study mesh (100 × 100 × 10, Δt 0.1 s, backward Euler, coupled) and finer.
+- **Evidence status on every result.** Benchmark agreement validates the solvers for the benchmarked cases; a prediction for a new material or process is labelled as not yet validated until it has been compared with measurements of that case in Suite 24.
+- **CAD.** STEP, IGES and BREP are tessellated by the OpenCASCADE kernel, Rhino 3DM by openNURBS, IFC by web-ifc and FreeCAD documents through their embedded BREP — all in the browser, loaded on demand (see `vendor/README.md` for licences). Closed proprietary formats (SOLIDWORKS, Inventor, CATIA, NX, Creo, Parasolid, ACIS, JT) have no open kernel: the importer recovers previews, properties, configurations and embedded streams, and names the neutral export needed for geometry.
 
 ## Run locally
 
@@ -25,7 +28,8 @@ No build step and no dependencies.
 
 ```sh
 python3 -m http.server 8080      # then open http://localhost:8080
-node tests/run.mjs               # contract, robustness and kernel tests
+node tests/run.mjs               # contract, robustness and geometry tests
+node tests/benchmarks.mjs        # independent reference benchmarks
 node tools/build-assets.mjs      # refresh the offline asset list after changing files
 ```
 
@@ -35,7 +39,7 @@ Reference data is requested by the user's browser directly from public services 
 
 ## Hosting and mirrors
 
-The app is a folder of static files. Publish the repository root on any static host; list each address in `mirrors.json` so users can switch if one host is unavailable. Installed copies continue to work offline regardless of host availability. `tools/deploy-mirrors.sh` pushes the same commit to every configured git remote.
+The app is a folder of static files. `mirrors.json` lists every address it is published at. `node tools/publish-mirrors.mjs <tag>` publishes a tagged release to independent copies that need no account: a permanently cached CDN copy, an Internet Archive snapshot of every file, and a Software Heritage archive of the source. `tools/deploy-mirrors.sh` pushes the same commit to any additional git remotes (GitLab, Codeberg, …). Installed copies continue to work offline regardless of host availability.
 
 ## Layout
 
@@ -45,7 +49,8 @@ js/core/        numerical kernel, chemistry, plotting, 3-D viewer, sensitivity, 
 js/suites/      s01.js … s29.js — one module per engineering suite
 js/geometry/    atomic, implicit/lattice, mesh/CAD, layout engines, format readers and writers
 js/pages/       user interface
-data/           specification knowledge base, materials library, environments
+data/           specification knowledge base, materials library, environments, reference benchmarks
+vendor/         on-demand open geometry kernels (WebAssembly) with their licences
 tests/          automated tests
 tools/          build scripts
 ```

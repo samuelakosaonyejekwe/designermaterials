@@ -279,12 +279,12 @@ function mpc(p) {
   for (let k = 0; k < n; k++) {
     const y = L + p.len_noise * 1e-9 * rnd.normal();
     if (k > 0) { const pred = vOfZ(0.5 * (zPrevAct + z)) * dt; if (pred > 1e-30) mhat = N.clamp(mhat + 0.3 * ((y - yPrev) / pred - mhat), 0.2, 5); }
-    yPrev = y; zPrevAct = z; const l0 = y / Lt, gm = g * mhat, rr = Array.from({ length: Nh }, (_, j) => ref(k + j + 1) / Lt), Lip = 2 * (gm * gm * Nh * (Nh + 1) / 2 + 4 * p.rho_u * g * g) + 1e-30;
+    yPrev = y; zPrevAct = z; const nLive = Math.min(Nh, n - k), l0 = y / Lt, gm = g * mhat, rr = Array.from({ length: Nh }, (_, j) => ref(k + j + 1) / Lt), Lip = 2 * (gm * gm * Nh * (Nh + 1) / 2 + 4 * p.rho_u * g * g) + 1e-30;
     for (let j = 0; j < Nh - 1; j++) plan[j] = plan[j + 1]; // warm start by shifting
-    let xk = Float64Array.from(plan), yk = Float64Array.from(plan), tk = 1; const grad = new Float64Array(Nh), cost = v => { let l = l0, J = 0, pr = nuPrev; for (let j = 0; j < Nh; j++) { l += gm * v[j]; J += (l - rr[j]) ** 2 + p.rho_u * g * g * (v[j] - pr) ** 2; pr = v[j]; } return J; };
-    const gradient = v => { let l = l0, acc = 0; const e = new Float64Array(Nh); for (let j = 0; j < Nh; j++) { l += gm * v[j]; e[j] = l - rr[j]; } for (let j = Nh - 1; j >= 0; j--) { acc += e[j]; grad[j] = 2 * gm * acc + 2 * p.rho_u * g * g * ((v[j] - (j > 0 ? v[j - 1] : nuPrev)) - (j < Nh - 1 ? v[j + 1] - v[j] : 0)); } };
+    let xk = Float64Array.from(plan), yk = Float64Array.from(plan), tk = 1; const grad = new Float64Array(Nh), cost = v => { let l = l0, J = 0, pr = nuPrev; for (let j = 0; j < nLive; j++) { l += gm * v[j]; J += (l - rr[j]) ** 2 + p.rho_u * g * g * (v[j] - pr) ** 2; pr = v[j]; } return J; };
+    const gradient = v => { let l = l0, acc = 0; const e = new Float64Array(Nh); for (let j = 0; j < nLive; j++) { l += gm * v[j]; e[j] = l - rr[j]; } for (let j = nLive - 1; j >= 0; j--) { acc += e[j]; grad[j] = 2 * gm * acc + 2 * p.rho_u * g * g * ((v[j] - (j > 0 ? v[j - 1] : nuPrev)) - (j < nLive - 1 ? v[j + 1] - v[j] : 0)); } };
     let it = 0, pg = 1;
-    for (; it < 80 && pg > 1e-9; it++) { gradient(yk); pg = 0; const xn = new Float64Array(Nh); for (let j = 0; j < Nh; j++) { xn[j] = N.clamp(yk[j] - grad[j] / Lip, nuLo, nuHi); pg = Math.max(pg, Math.abs(xn[j] - yk[j])); } const tn = 0.5 * (1 + Math.sqrt(1 + 4 * tk * tk)); for (let j = 0; j < Nh; j++) yk[j] = xn[j] + (tk - 1) / tn * (xn[j] - xk[j]); if (cost(xn) > cost(xk)) { yk = Float64Array.from(xn); tk = 1; } else tk = tn; xk = xn; }
+    for (; it < 80 && pg > 1e-9; it++) { gradient(yk); pg = 0; const xn = Float64Array.from(xk); for (let j = 0; j < nLive; j++) { xn[j] = N.clamp(yk[j] - grad[j] / Lip, nuLo, nuHi); pg = Math.max(pg, Math.abs(xn[j] - yk[j])); } const tn = 0.5 * (1 + Math.sqrt(1 + 4 * tk * tk)); for (let j = 0; j < nLive; j++) yk[j] = xn[j] + (tk - 1) / tn * (xn[j] - xk[j]); if (cost(xn) > cost(xk)) { yk = Float64Array.from(xn); tk = 1; } else tk = tn; xk = xn; }
     itTot += it; pgMax = Math.max(pgMax, pg); plan = xk; const nu = plan[0]; if (nu <= nuLo + 1e-9 || nu >= nuHi - 1e-9) satN++;
     const zc = N.clamp(zOfV(nu * vNom), zLo, zHi); nuPrev = nu; Zc.push(zc); Mh.push(mhat);
     [L, z] = plant(L, z, zc); Za.push(z); Lcl.push(L);
@@ -318,7 +318,7 @@ function mpc(p) {
     ],
     equations: [
       eqn('governing', 'Growth model used by the controller', temp ? 'dL/dt = m̂·G_ref·exp[−E_a/R·(1/T − 1/T_ref)]' : 'dL/dt = m̂·G_ref·(c/c_ref)'),
-      eqn('governing', 'Finite-horizon optimal control problem', 'min Σⱼ (L_{k+j} − r_{k+j})² + ρ Σⱼ (Δv_{k+j})²   s.t.  v_min ≤ v ≤ v_max,  L_{j+1} = L_j + Δt·m̂·v_j'),
+      eqn('governing', 'Finite-horizon optimal control problem', 'min Σⱼ (L_{k+j} − r_{k+j})² + ρ Σⱼ (Δv_{k+j})²   s.t.  v_min ≤ v ≤ v_max,  L_{j+1} = L_j + Δt·m̂·v_j;  the horizon shrinks to the intervals remaining in the batch'),
       eqn('formula', 'Disturbance estimator', 'm̂ ← m̂ + 0.3·[ΔL_measured/(v_model·Δt) − m̂]'),
       eqn('formula', 'Solver', 'accelerated projected gradient on the box-constrained QP, step 1/L_Lipschitz, warm start'),
       ...znoEqs(),
@@ -600,7 +600,7 @@ function lcTune(p) {
   const warnings = [], ne = Math.max(p.n_e, p.n_o + 0.001), no = p.n_o, K = p.K11 * 1e-12, d = p.d_lc * 1e-6, lam = p.lam_nm * 1e-9, Vth = N.PI * Math.sqrt(K / (N.EPS0 * p.d_eps));
   const tilt = V => V <= Vth ? 0 : N.PI / 2 - 2 * Math.atan(Math.exp(-(V - Vth) / Vth)), nEff = th => no * ne / Math.sqrt(ne * ne * Math.sin(th) ** 2 + no * no * Math.cos(th) ** 2);
   const th = tilt(p.V_lc), nV = nEff(th), dn = ne - nV, dnMax = ne - no, phase = 2 * N.PI * dn * d / lam, nAvg = 0.5 * (ne + no), shift = p.overlap * dn / nAvg, f0 = N.C0 / lam, dLam = -shift * lam, tOff = p.gamma1 * d * d / (K * N.PI ** 2), tOn = p.V_lc > Vth * 1.001 ? tOff / ((p.V_lc / Vth) ** 2 - 1) : tOff * 1000;
-  const epsPar = 5 + p.d_eps, Carea = N.EPS0 * epsPar / d, Earea = 0.5 * Carea * p.V_lc ** 2, Parea = Carea * p.V_lc ** 2 * 1000, usedFrac = dnMax > 0 ? dn / dnMax : 0;
+  const epsPar = 5 + p.d_eps, Carea = N.EPS0 * epsPar / d, Earea = 0.5 * Carea * p.V_lc ** 2, Parea = 2 * N.PI * 1000 * Carea * p.V_lc ** 2, usedFrac = dnMax > 0 ? dn / dnMax : 0;
   if (p.n_e <= p.n_o) warnings.push('Extraordinary index must exceed the ordinary index for a positive-birefringence nematic; a minimal birefringence of 0.001 is used.');
   if (p.V_lc <= Vth) warnings.push(`Drive voltage ${F(p.V_lc)} V is below the Fréedericksz threshold ${F(Vth, 3)} V: the director does not reorient and no tuning occurs.`);
   if (lam > 1e-4) warnings.push('At millimetre and longer wavelengths liquid-crystal birefringence is retained but absorption (tan δ ≈ 0.01–0.03) limits the resonator Q.');
@@ -893,7 +893,7 @@ export default {
     { name: 'VO₂ terahertz switch metasurface', note: 'Volatile insulator–metal transition shorting a 1 THz resonator gap.', values: { mode: 'pcm', pcm_mat: 'vo2', f0_ms: 1e12, P_mw: 3, G_th: 2e-5 } },
     { name: 'GST non-volatile metasurface pixel', note: 'Terahertz Ge₂Sb₂Te₅ pixel on a micro-heater: set by annealing, reset by melt-quench, no holding power.', values: { mode: 'pcm', pcm_mat: 'gst', area_um2: 25, thick_nm: 100, G_th: 1e-5, Cth_mult: 3, P_mw: 8, f0_ms: 1e12, X0: 300, R_ms: 8 } },
     { name: 'Programmable bistable lattice, 8 units', note: 'Mechanical memory and reusable energy absorption from snap-through units.', values: { mode: 'bistable', n_units: 8, k_bar: 2e4, w_b: 10, h_b: 1.2, var_pct: 5 } },
-    { name: 'Quasi-zero-stiffness isolator', note: 'Negative-stiffness springs tuned to cancel 96 % of the mount stiffness.', values: { mode: 'qzs', kq_v: 2000, kq_h: 1500, L0_q: 100, a_q: 62, m_q: 5, f_exc: 2 } },
+    { name: 'Quasi-zero-stiffness isolator', note: 'Negative-stiffness springs tuned to cancel 92 % of the mount stiffness.', values: { mode: 'qzs', kq_v: 2000, kq_h: 1500, L0_q: 100, a_q: 62, m_q: 5, f_exc: 2 } },
     { name: 'YIG ferrite, negative-permeability band', note: 'Field-tunable negative effective permeability between resonance and anti-resonance.', values: { mode: 'ferrite', Ms: 1.4e5, H_b: 1e5, f_op: 6e9, alpha_g: 0.003 } },
   ],
   run(inp) {

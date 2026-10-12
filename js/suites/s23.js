@@ -44,8 +44,9 @@ export function linfit(x, y) {
   const s2 = n > 2 ? ss / (n - 2) : 0, seSlope = sxx > 0 ? Math.sqrt(s2 / sxx) : 0, seInt = Math.sqrt(s2 * (1 / Math.max(1, n) + (sxx > 0 ? mx * mx / sxx : 0)));
   return { slope, intercept, seSlope, seInt, r2: syy > 0 ? Math.max(0, 1 - ss / syy) : 1, s: Math.sqrt(s2), n, mx, sxx };
 }
-// Student-t quantile (Cornish–Fisher expansion in 1/ν)
-export function tq(p, nu) { const z = N.normInv(N.clamp(p, 1e-9, 1 - 1e-9)), v = Math.max(1, nu), z3 = z ** 3, z5 = z ** 5, z7 = z ** 7, z9 = z ** 9; return z + (z3 + z) / (4 * v) + (5 * z5 + 16 * z3 + 3 * z) / (96 * v * v) + (3 * z7 + 19 * z5 + 17 * z3 - 15 * z) / (384 * v ** 3) + (79 * z9 + 776 * z7 + 1482 * z5 - 1920 * z3 - 945 * z) / (92160 * v ** 4); }
+// Student-t quantile (closed form for ν = 1, 2; Cornish–Fisher expansion in 1/ν otherwise)
+export function tq(p, nu) { p = N.clamp(p, 1e-9, 1 - 1e-9); if (nu <= 1) return Math.tan(PI * (p - 0.5)); if (nu === 2) return (2 * p - 1) / Math.sqrt(2 * p * (1 - p));   // exact for 1 and 2 degrees of freedom, where the expansion is poor
+  const z = N.normInv(p), v = Math.max(1, nu), z3 = z ** 3, z5 = z ** 5, z7 = z ** 7, z9 = z ** 9; return z + (z3 + z) / (4 * v) + (5 * z5 + 16 * z3 + 3 * z) / (96 * v * v) + (3 * z7 + 19 * z5 + 17 * z3 - 15 * z) / (384 * v ** 3) + (79 * z9 + 776 * z7 + 1482 * z5 - 1920 * z3 - 945 * z) / (92160 * v ** 4); }
 export function smooth(y, h = 2) { const n = y.length, o = new Array(n); for (let i = 0; i < n; i++) { let s = 0, c = 0; for (let j = Math.max(0, i - h); j <= Math.min(n - 1, i + h); j++) { s += y[j]; c++; } o[i] = s / c; } return o; }
 // SNIP background: iterative peak clipping with a shrinking half-window of m channels
 export function snip(y, m) { const n = y.length, b = [...y]; for (let p = Math.min(m, (n - 1) >> 1); p >= 1; p--) { const t = [...b]; for (let i = p; i < n - p; i++) { const a = 0.5 * (t[i - p] + t[i + p]); if (a < b[i]) b[i] = a; } } return b; }
@@ -711,7 +712,7 @@ function mTensile(inp, o) {
 
 function mVSM(inp, o) {
   const t = o.tbl(inp.vsm_table, 2, 10, 'Hysteresis loop'), H = t.rows.map(r => r[0]), M = t.rows.map(r => r[1]), n = H.length, Hmax = N.maxOf(H.map(Math.abs)), hc = [], mr = [];
-  for (let i = 1; i < n; i++) { if (M[i - 1] * M[i] < 0) hc.push(H[i - 1] - M[i - 1] * (H[i] - H[i - 1]) / (M[i] - M[i - 1])); if (H[i - 1] * H[i] < 0 || (H[i] === 0 && H[i - 1] !== 0)) mr.push(H[i] === 0 ? M[i] : M[i - 1] - H[i - 1] * (M[i] - M[i - 1]) / (H[i] - H[i - 1])); }
+  for (let i = 1; i < n; i++) { if (M[i - 1] * M[i] < 0 || (M[i] === 0 && M[i - 1] !== 0)) hc.push(H[i - 1] - M[i - 1] * (H[i] - H[i - 1]) / (M[i] - M[i - 1])); if (H[i - 1] * H[i] < 0 || (H[i] === 0 && H[i - 1] !== 0)) mr.push(H[i] === 0 ? M[i] : M[i - 1] - H[i - 1] * (M[i] - M[i - 1]) / (H[i] - H[i - 1])); }
   const hi = H.map((_, i) => i).filter(i => Math.abs(H[i]) > 0.7 * Hmax), fa = hi.length >= 4 ? linfit(hi.map(i => 1 / Math.abs(H[i])), hi.map(i => Math.abs(M[i]))) : null, Mmax = N.maxOf(M.map(Math.abs)), Ms = fa && fa.intercept > 0 && fa.intercept < 2 * Mmax ? fa.intercept : Mmax;
   const Hc = hc.length ? N.mean(hc.map(Math.abs)) : 0, Mr = mr.length ? N.mean(mr.map(Math.abs)) : 0, bias = hc.length >= 2 ? N.mean(hc) : 0, sq = Ms > 0 ? Mr / Ms : 0; let area = 0; for (let i = 0; i < n; i++) { const j = (i + 1) % n; area += H[i] * M[j] - H[j] * M[i]; }
   const loss = N.MU0 * Math.abs(area) / 2 * 1e6, sat = Ms > 0 ? Mmax / Ms : 0, closed = Math.hypot(H[0] - H[n - 1], 0) < 0.1 * Hmax;

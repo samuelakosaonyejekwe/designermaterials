@@ -426,7 +426,7 @@ const TOPO = {
   octet: { name: 'octet truss', Ltot: 24 / Math.SQRT2, l: 1 / Math.SQRT2, stretch: true, C: r => ({ C11: r / 6, C12: r / 12, C44: r / 12 }) },
   sc: { name: 'simple cubic', Ltot: 3, l: 1, stretch: true, C: r => ({ C11: r / 3, C12: 0, C44: r * r / 18 }) },
   bcc: { name: 'body-centred cubic', Ltot: 4 * Math.sqrt(3), l: Math.sqrt(3) / 2, stretch: false, C: r => { const K = r / 9, E = r * r, Cp = 3 * K * E / (9 * K - E); return { C11: K + 4 * Cp / 3, C12: K - 2 * Cp / 3, C44: r / 9 }; } },
-  kelvin: { name: 'Kelvin cell', Ltot: 24 / (2 * Math.SQRT2), l: 1 / (2 * Math.SQRT2), stretch: false, C: r => { const E = r * r, G = 3 * E / 8, K = E; return { C11: K + 4 * G / 3, C12: K - 2 * G / 3, C44: G }; } },
+  kelvin: { name: 'Kelvin cell', Ltot: 24 / (2 * Math.SQRT2), l: 1 / (2 * Math.SQRT2), stretch: false, C: r => { const K = r / 9, E = r * r, Cp = 3 * K * E / (9 * K - E), G = 3 * E / 8; return { C11: K + 4 * Cp / 3, C12: K - 2 * Cp / 3, C44: G }; } }, // hydrostatic load is carried by strut stretching (K = ρ̄E_s/9); E[100] and G follow the Gibson–Ashby bending law
 };
 function cubicFrom(c) { const Cp = (c.C11 - c.C12) / 2, K = (c.C11 + 2 * c.C12) / 3, S11 = (c.C11 + c.C12) / ((c.C11 - c.C12) * (c.C11 + 2 * c.C12)), S12 = -c.C12 / ((c.C11 - c.C12) * (c.C11 + 2 * c.C12)), S44 = 1 / c.C44, GV = (2 * Cp + 3 * c.C44) / 5, GR = 5 * Cp * c.C44 / (2 * c.C44 + 3 * Cp), G = 0.5 * (GV + GR); return { K, Cp, S11, S12, S44, E100: 1 / S11, E111: 1 / (S11 - 2 * (S11 - S12 - S44 / 2) / 3), nu100: -S12 / S11, A: c.C44 / Cp, G, E: Eof(K, G), nu: nuof(K, G), Edir: J => 1 / (S11 - 2 * (S11 - S12 - S44 / 2) * J) }; }
 function latticeGeom(topo, a) { // one or a few unit cells as a strut network, coordinates in units of a

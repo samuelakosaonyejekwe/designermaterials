@@ -80,6 +80,7 @@ const eLambda = kV => { const V = kV * 1e3, E = N.Q_E * V; return N.H_PLANCK / M
 const wavelength = inp => { const r = pick(inp.rad, Object.keys(RAD), 'CuKa'); return r === 'electron' ? { key: r, name: `${F(num(inp, 'kV', 200, 20, 1000), 4)} kV electrons`, lam: eLambda(num(inp, 'kV', 200, 20, 1000)) } : { key: r, ...RAD[r] }; };
 
 const cellInfo = s => A.cellParams(s.cell);
+const vacuumGap = s => { if (!s.cell) return 0; const c = s.cell[2][2], z = s.atoms.map(a => a.z).sort((p, q) => p - q); let g = c - z[z.length - 1] + z[0]; for (let i = 1; i < z.length; i++) g = Math.max(g, z[i] - z[i - 1]); return g; };   // widest empty gap along z (Å); > 5 Å marks a vacuum-padded 2-D entry
 const formulaAtoms = f => { const a = chem.parseFormula(f).atoms; return Object.values(a).reduce((x, y) => x + y, 0); };
 function structExports(s, base, which = ['cif', 'poscar', 'xyz', 'extxyz', 'xsf', 'lammps']) {
   const W = {
@@ -148,7 +149,9 @@ function runCrystal(inp) {
       eqn('formula', 'X-ray density', `ρ = Z M /(N_A V) = ${F(Z, 4)} × ${F(Mf, 5)} g/mol /(N_A × ${F(p.volume, 5)} Å³) = ${F(rhoCheck, 5)} kg/m³`), eqn('constitutive', 'Scherrer broadening', 'β_L = K λ /(L cos θ),  K = 0.9'));
     checks.push(chk('Density consistency', Math.abs(rhoCheck - rho) / rho < 1e-6, `Z·M/(N_A·V) and the atom-by-atom mass sum agree to ${F(Math.abs(rhoCheck - rho) / rho, 2)} relative`), chk('Integer formula units', Math.abs(Z - Math.round(Z)) < 1e-6, `Z = ${F(Z, 6)}`),
       chk('Bragg law on strongest line', !top || Math.abs(2 * top.d_A * Math.sin(top.twoTheta * PI / 360) - wl.lam) < 1e-6, top ? `2 d sin θ − λ = ${F(2 * top.d_A * Math.sin(top.twoTheta * PI / 360) - wl.lam, 2)} Å` : 'no reflection in range'));
-    Object.assign(publish, { 'prop.density': rho, 'prop.lattice_a': p.a * 1e-10, 'prop.lattice_c': p.c * 1e-10, 'struct.cell_volume': p.volume * 1e-30, 'struct.Z': Z });
+    const vac = vacuumGap(cell) > 5;
+    if (vac) warnings.push(`The cell contains a vacuum gap of ${F(vacuumGap(cell), 3)} Å along c: the density of ${F(rho, 4)} kg/m³ refers to the periodic box, not to a bulk solid, and c is not a lattice parameter. The areal mass density is ${F(rho * p.c * 1e-10 * 1e6, 4)} mg/m²; density and c are not published.`);
+    Object.assign(publish, { 'prop.lattice_a': p.a * 1e-10, 'struct.cell_volume': p.volume * 1e-30, 'struct.Z': Z }, vac ? {} : { 'prop.density': rho, 'prop.lattice_c': p.c * 1e-10 });
     exportsS = structExports({ ...geo, title: `${title} ${reps.join('x')}` }, `${base}_${reps.join('x')}`);
   } else {
     warnings.push('The pasted structure has no lattice: it is treated as a finite molecule or cluster, so density, d-spacings and powder diffraction are not computed.');
@@ -240,7 +243,8 @@ function runNano(inp) {
   if (!user && !lib.Ec) warnings.push(`No library cohesive energy for ${def.name}: the user value ${F(Ec, 4)} eV/atom was used.`);
   if (noTm) warnings.push(`${def.name} has no congruent melting point at ambient pressure (it decomposes, sublimes or transforms first): no melting estimate is given. Select user data to supply a reference temperature.`);
   else if (!user && !lib.Tm) warnings.push(`No library melting point for ${def.name}: the user value ${F(Tm, 5)} K was used.`);
-  const Esurf = nAt * Ec * (1 - fb), gammaBB = area > 0 ? Esurf * N.Q_E / (area * 1e-20) : 0, EcN = Ec * fb, TmN = Tm * fb, SV = area / vol * 1e10, rho = bulk.density_kg_m3, ssa = SV / rho;
+  const Esurf = nAt * Ec * (1 - fb), gammaBB = area > 0 ? Esurf * N.Q_E / (area * 1e-20) : 0, EcN = Ec * fb, TmN = Tm * fb, SV = area / vol * 1e10, thin = shape === 'sheet' || shape === 'slab' || shape === 'tube', massKg = an.molarMass_g_mol * 1e-3 / N.N_A;
+  const rho = vacuumGap(bulkCell) > 5 && def.formula === 'C' ? A.analyse(A.buildCell('graphite')).density_kg_m3 : bulk.density_kg_m3, ssa = thin && massKg > 0 ? area * 1e-20 / massKg : SV / rho;
   const d0 = bulk.nearestNeighbour_A || 2.5, Ebond = zbMean > 0 ? 2 * Ec / zbMean : 0;
   // size scaling: surface-to-volume ∝ 1/D; cohesive energy E(D)/E_b = 1 − c·d0/D with c fitted to this particle
   const cShape = sizeA > 0 ? (1 - fb) * sizeA / d0 : 0, Ds = N.logspace(Math.max(0.6, 2 * d0 / 10), 60, 60);
@@ -259,12 +263,12 @@ function runNano(inp) {
     kpis: [
       kpi('natoms', 'Atoms', nAt, '–', `Number of atoms in the generated ${shape} structure (${Object.entries(an.composition).map(([e, c]) => `${e} ${c}`).join(', ')}).`),
       kpi('f_surf', 'Surface-atom fraction', fSurf, '–', `Fraction of atoms with fewer first-shell neighbours than in the bulk crystal${shape === 'tube' || fSurf === 1 ? ' (every atom of a single-wall tube or monolayer is a surface atom)' : ''}. These atoms dominate adsorption, catalysis and dissolution.`),
-      kpi('SV', 'Surface-to-volume ratio', SV, '1/m', `Geometric area/volume of the ${shape}: ${F(area / 100, 4)} nm² over ${F(vol / 1000, 4)} nm³. Equivalent specific surface area ${F(ssa, 4)} m²/kg using the bulk density.`),
+      kpi('SV', 'Surface-to-volume ratio', SV, '1/m', `Geometric area/volume of the ${shape}: ${F(area / 100, 4)} nm² over ${F(vol / 1000, 4)} nm³. ${thin ? `Specific surface area ${F(ssa, 4)} m²/kg from the mass of the atoms.` : `Equivalent specific surface area ${F(ssa, 4)} m²/kg using the bulk density.`}`),
       kpi('E_surf', 'Surface energy contribution', Esurf, 'eV', `Total energy of the missing bonds, N·E_coh·(1 − ⟨Z⟩/Z_bulk), with a bond energy of ${F(Ebond, 3)} eV from E_coh = ${F(Ec, 4)} eV/atom and Z_bulk = ${F(zbMean, 3)}.`),
       kpi('gamma_bb', 'Broken-bond surface energy', gammaBB, 'J/m²', `Surface energy contribution divided by the geometric area.${libG ? ` The typical measured value for this metal is about ${libG} J/m²; the unrelaxed broken-bond figure is normally higher.` : ' No experimental reference is stored for this material; treat the figure as an upper-bound estimate.'}`, null),
       kpi('Ecoh', 'Cohesive energy of the nanostructure', EcN, 'eV/atom', `Bulk cohesive energy scaled by the retained bond fraction ${F(fb, 4)} (bond-order / broken-bond model). The deficit of ${F(Ec - EcN, 3)} eV/atom is the driving force for coarsening and sintering.`),
       noTm ? kpi('Tm', 'Estimated melting point', 'not applicable', '', 'The bulk phase sublimes, decomposes or transforms before melting at ambient pressure, so a size-dependent melting point is not meaningful; the cohesive-energy ratio still measures the loss of thermal stability.') : kpi('Tm', 'Estimated melting point', TmN, 'K', `T_m(D) = T_m,bulk × E_coh(D)/E_coh,bulk — a Lindemann-type bond-order estimate, qualitatively equivalent to Gibbs–Thomson 1/D depression. It is an order-of-magnitude guide for free, clean particles only.`, null),
-      kpi('ssa', 'Specific surface area', ssa, 'm²/kg', `S/V divided by the bulk density ${F(rho, 4)} kg/m³; compare with a BET measurement to judge agglomeration.`),
+      kpi('ssa', 'Specific surface area', ssa, 'm²/kg', thin ? `Area of both faces (${F(area / 100, 4)} nm²) divided by the mass of the ${nAt} atoms, independent of any assumed thickness; a graphene monolayer gives about 2.63 × 10⁶ m²/kg. Compare with a BET measurement to judge stacking and bundling.` : `S/V divided by the bulk density ${F(rho, 4)} kg/m³; compare with a BET measurement to judge agglomeration.`),
       kpi('cn', 'Mean coordination number', zSum / nAt, '–', `Average first-shell coordination in the nanostructure against ${F(zbMean, 3)} in the bulk crystal.`),
     ],
     series,
@@ -453,7 +457,7 @@ const birch = (p, V) => { const [E0, V0, B0, Bp] = p, f = (V0 / V) ** (2 / 3); r
 function eosFit(E, vAtom, dGuess) {
   const scan = N.linspace(0.45 * dGuess, 1.6 * dGuess, 47), iMin = N.argmin(scan.map(E));
   let d0 = N.goldenSection(E, scan[Math.max(iMin - 1, 0)], scan[Math.min(iMin + 1, scan.length - 1)], 1e-9 * dGuess); if (!(d0 > 0)) d0 = dGuess;
-  const E0 = E(d0), V0 = vAtom * d0 ** 3, ds = N.linspace(0.94 * d0, 1.07 * d0, 21), Vs = ds.map(d => vAtom * d ** 3), Es = ds.map(E);
+  const E0 = E(d0), V0 = vAtom * d0 ** 3, ds = N.linspace(0.98 * d0, 1.02 * d0, 21), Vs = ds.map(d => vAtom * d ** 3), Es = ds.map(E);
   const h = 0.004 * d0, d2 = (E(d0 + h) - 2 * E0 + E(d0 - h)) / (h * h), Bfd = d2 / (9 * vAtom * d0);
   const fit = N.levenbergMarquardt(p => Vs.map((V, i) => birch(p, V) - Es[i]), [E0, V0, Math.max(Bfd, 1e-6), 5], { maxIter: 60 });
   const ok = fit.p.every(Number.isFinite) && fit.p[1] > 0 && fit.p[2] > 0;
@@ -538,7 +542,7 @@ function runPotential(inp) {
   const r = res[st], [E0, V0, B0, Bp] = r.p, a0 = latConst(st, Math.cbrt(V0 / shells(st).vAtom)), Ec = -E0, B = B0 * EVA3_GPA, rho = pt.mass * 1.66053907e-27 / (V0 * 1e-30), best = ['fcc', 'bcc', 'hcp'].reduce((b, s) => (res[s].E0 < res[b].E0 ? s : b));
   const ex = POT[pk] && st === POT[pk].st ? POT[pk] : null, phi = pairPhi(pt), rr = N.linspace(0.8 * dG, 2.6 * dG, 150);
   const aGrid = r.ds.map(d => latConst(st, d)), fitE = r.ds.map(d => birch(r.p, shells(st).vAtom * d ** 3));
-  checks.push(chk('Birch–Murnaghan fit quality', r.rms < 1e-3 * Math.abs(E0) + 1e-9, `rms residual ${F(r.rms, 2)} eV/atom over ±6 % in lattice parameter (${r.it} Levenberg–Marquardt iterations)`),
+  checks.push(chk('Birch–Murnaghan fit quality', r.rms < 1e-3 * Math.abs(E0) + 1e-9, `rms residual ${F(r.rms, 2)} eV/atom over ±2 % in lattice parameter (${r.it} Levenberg–Marquardt iterations)`),
     chk('Bulk modulus: fit vs finite difference', Math.abs(B0 - r.Bfd) / Math.max(r.Bfd, 1e-12) < 0.05, `fit ${F(B, 4)} GPa, second difference ${F(r.Bfd * EVA3_GPA, 4)} GPa`), chk('Bound crystal', E0 < 0 && B0 > 0, `E₀ = ${F(E0, 4)} eV/atom, B₀ = ${F(B, 4)} GPa`));
   if (pt.type === 'lj') checks.push(chk('LJ fcc reduced constants', st !== 'fcc' || (Math.abs(r.d0 / pt.r - 1.0902) < 2e-3 && Math.abs(E0 / pt.e + 8.610) < 0.01), `d₀/σ = ${F(r.d0 / pt.r, 5)} (1.0902), E/ε = ${F(E0 / pt.e, 5)} (−8.610) for the static fcc crystal${st !== 'fcc' ? ' — applies to fcc only' : ''}`));
   if (ex) checks.push(chk('Lattice parameter within 3 % of experiment', Math.abs(a0 - ex.a) / ex.a < 0.03, `${F(a0, 5)} Å vs ${ex.a} Å`));
@@ -792,7 +796,7 @@ export default {
     { name: 'Gold nanoparticle, 3 nm truncated octahedron', note: 'Classic size-dependent melting case for a noble-metal catalyst particle.', values: { mode: 'nano', crystal: 'Au', nshape: 'wulff-like', dnm: 3e-9 } },
     { name: '(10,10) armchair carbon nanotube', note: 'Metallic single-wall tube, 1.36 nm diameter; exports a periodic cell.', values: { mode: 'nano', crystal: 'graphene', nshape: 'tube', tn: 10, tm: 10, Lnm: 5e-9 } },
     { name: 'Al-doped ZnO (AZO), 2 % Al', note: 'Donor doping of a transparent conducting oxide: Kröger–Vink reactions and Vegard shift.', values: { mode: 'defect', crystal: 'ZnO_wurtzite', dopant: 'Al3+', xdop: 2, T_C: 900 } },
-    { name: 'La-doped SrTiO₃ perovskite', note: 'A-site donor doping with Goldschmidt tolerance-factor check.', values: { mode: 'defect', crystal: 'SrTiO3', dopant: 'La3+', xdop: 5, T_C: 1200 } },
+    { name: 'La-doped SrTiO₃ perovskite', note: 'A-site donor doping with Goldschmidt tolerance-factor check.', values: { mode: 'defect', crystal: 'SrTiO3', dopant: 'La3+', xdop: 5, T_C: 1200, Esch: 8 } },
     { name: 'Argon Lennard-Jones crystal', note: 'Benchmark: a ≈ 5.25 Å, E_coh ≈ 0.09 eV/atom for the static fcc lattice.', values: { mode: 'potential', potModel: 'pair', pot: 'Ar', lattice: 'auto' } },
     { name: 'NaCl lattice energy (Madelung, Born–Landé)', note: 'Ionic-model benchmark against the Born–Haber cycle.', values: { mode: 'potential', potModel: 'ionic', salt: 'NaCl', bornN: 0 } },
     { name: 'Ge on Si(001) heteroepitaxy', note: '4.2 % mismatch: critical thickness of about a nanometre.', values: { mode: 'epitaxy', film: 'Ge', substrate: 'Si', epiOri: 'direct', hfilm: 2e-8, T_C: 550 } },

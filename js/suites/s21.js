@@ -63,11 +63,11 @@ function assemble(g, o) {
   let q = 0;
   for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++, q++) {
     const d = D[q]; let p = sdt + (K ? K[q] : 0), rhs = sdt * old[q] + (Q ? Q[q] : 0), c;
-    if (i > 0) { c = hm(d, D[q - 1]) * ix2; aW[q] = c; p += c; } else { aW[q] = 0; if (sk === 2) { c = 1 / (1 / sh + 0.5 * dx / d) / dx; p += c; rhs += c * sv; } }
+    if (i > 0) { c = aE[q - 1]; aW[q] = c; p += c; } /* same face as the east face of the previous cell */ else { aW[q] = 0; if (sk === 2) { c = 1 / (1 / sh + 0.5 * dx / d) / dx; p += c; rhs += c * sv; } }
     if (i < nx - 1) { c = hm(d, D[q + 1]) * ix2; aE[q] = c; p += c; } else { aE[q] = 0; if (sk === 2) { c = 1 / (1 / sh + 0.5 * dx / d) / dx; p += c; rhs += c * sv; } }
-    if (j > 0) { c = hm(d, D[q - nx]) * iy2; aS[q] = c; p += c; } else { aS[q] = 0; if (sk === 2) { c = 1 / (1 / sh + 0.5 * dy / d) / dy; p += c; rhs += c * sv; } }
+    if (j > 0) { c = aN[q - nx]; aS[q] = c; p += c; } else { aS[q] = 0; if (sk === 2) { c = 1 / (1 / sh + 0.5 * dy / d) / dy; p += c; rhs += c * sv; } }
     if (j < ny - 1) { c = hm(d, D[q + nx]) * iy2; aN[q] = c; p += c; } else { aN[q] = 0; if (sk === 2) { c = 1 / (1 / sh + 0.5 * dy / d) / dy; p += c; rhs += c * sv; } }
-    if (k > 0) { c = hm(d, D[q - nxy]) * iz2; let a = c; if (w) { const wf = 0.5 * (w[q] + w[q - nxy]); if (wf > 0) a += wf / dz; else p -= wf / dz; } aB[q] = a; p += c; }
+    if (k > 0) { c = w ? hm(d, D[q - nxy]) * iz2 : aT[q - nxy]; let a = c; if (w) { const wf = 0.5 * (w[q] + w[q - nxy]); if (wf > 0) a += wf / dz; else p -= wf / dz; } aB[q] = a; p += c; }
     else {
       aB[q] = 0;
       if (bk === 1) { c = 2 * d * iz2; p += c; rhs += c * bv; if (w) { if (w[q] > 0) rhs += w[q] * bv / dz; else p -= w[q] / dz; } }
@@ -122,25 +122,35 @@ function relax(g, u, tol, maxSw) {
 
 // Conjugate gradients with an exact z-line (block-Jacobi) preconditioner for the symmetric operators (temperature, pressure)
 function pcgSym(g, u, tol, maxIt) {
-  const { n, nx, nxy, nz, aP, aW, aE, aS, aN, aB, aT, b, cp, dp } = g, r = new Float64Array(n), z = new Float64Array(n), pv = new Float64Array(n), Ap = new Float64Array(n);
-  const mv = (x, y) => { for (let q = 0; q < n; q++) { let v = aP[q] * x[q], c; if ((c = aW[q]) !== 0) v -= c * x[q - 1]; if ((c = aE[q]) !== 0) v -= c * x[q + 1]; if ((c = aS[q]) !== 0) v -= c * x[q - nx]; if ((c = aN[q]) !== 0) v -= c * x[q + nx]; if ((c = aB[q]) !== 0) v -= c * x[q - nxy]; if ((c = aT[q]) !== 0) v -= c * x[q + nxy]; y[q] = v; } };
-  const pre = () => { for (let c0 = 0; c0 < nxy; c0++) { let q = c0; for (let m = 0; m < nz; m++, q += nxy) { const l = aB[q], den = m ? aP[q] - l * cp[m - 1] : aP[q]; cp[m] = aT[q] / den; dp[m] = (m ? r[q] + l * dp[m - 1] : r[q]) / den; } q -= nxy; z[q] = dp[nz - 1]; for (let m = nz - 2; m >= 0; m--) { q -= nxy; z[q] = dp[m] + cp[m] * z[q + nxy]; } } };
-  let sc = 0; for (let q = 0; q < n; q++) { const v = Math.abs(aP[q] * u[q]) + Math.abs(b[q]); if (v > sc) sc = v; } if (!(sc > 0)) return 0;
-  mv(u, Ap); let rm = 0; for (let q = 0; q < n; q++) { r[q] = b[q] - Ap[q]; const v = Math.abs(r[q]); if (v > rm) rm = v; }
+  const { n, nx, nxy, aP, aW, aE, aS, aN, aB, aT, b } = g, ws = g.ws || (g.ws = [0, 0, 0, 0, 0, 0].map(() => new Float64Array(n))), r = ws[0], z = ws[1], pv = ws[2], Ap = ws[3], cf = ws[4], df = ws[5]; // work vectors allocated once per grid and reused
+  // exact z-line (Thomas) solves, traversed plane by plane so that memory is read as a few sequential streams; the factorisation is formed once per solve
+  const factor = () => { for (let q = 0; q < nxy; q++) { const den = aP[q]; df[q] = den; cf[q] = aT[q] / den; } for (let q = nxy; q < n; q++) { const den = aP[q] - aB[q] * cf[q - nxy]; df[q] = den; cf[q] = aT[q] / den; } };
+  const pre = () => { for (let q = 0; q < nxy; q++) z[q] = r[q] / df[q]; for (let q = nxy; q < n; q++) z[q] = (r[q] + aB[q] * z[q - nxy]) / df[q]; for (let q = n - nxy - 1; q >= 0; q--) z[q] = z[q] + cf[q] * z[q + nxy]; };
+  // initial residual r = b − A u and its scale in one pass
+  let sc = 0, rm = 0;
+  for (let q = 0; q < n; q++) {
+    const d0 = aP[q] * u[q], bq = b[q]; let v = d0, c; if ((c = aW[q]) !== 0) v -= c * u[q - 1]; if ((c = aE[q]) !== 0) v -= c * u[q + 1]; if ((c = aS[q]) !== 0) v -= c * u[q - nx]; if ((c = aN[q]) !== 0) v -= c * u[q + nx]; if ((c = aB[q]) !== 0) v -= c * u[q - nxy]; if ((c = aT[q]) !== 0) v -= c * u[q + nxy];
+    const s0 = Math.abs(d0) + Math.abs(bq); if (s0 > sc) sc = s0; const rq = bq - v; r[q] = rq; const ar = Math.abs(rq); if (ar > rm) rm = ar;
+  }
+  if (!(sc > 0)) return 0;
   if (rm / sc < tol) return rm / sc;
-  pre(); pv.set(z); let rz = 0; for (let q = 0; q < n; q++) rz += r[q] * z[q];
+  factor(); pre(); pv.set(z); let rz = 0; for (let q = 0; q < n; q++) rz += r[q] * z[q];
   const ctr = g.ctr;
   for (let it = 0; it < maxIt && rm / sc >= tol && (it < 2 || ctr[0] < ctr[1]); it++) {
-    mv(pv, Ap); let pAp = 0; for (let q = 0; q < n; q++) pAp += pv[q] * Ap[q]; if (!(pAp > 0)) break;
+    let pAp = 0;
+    for (let q = 0; q < n; q++) { let v = aP[q] * pv[q], c; if ((c = aW[q]) !== 0) v -= c * pv[q - 1]; if ((c = aE[q]) !== 0) v -= c * pv[q + 1]; if ((c = aS[q]) !== 0) v -= c * pv[q - nx]; if ((c = aN[q]) !== 0) v -= c * pv[q + nx]; if ((c = aB[q]) !== 0) v -= c * pv[q - nxy]; if ((c = aT[q]) !== 0) v -= c * pv[q + nxy]; Ap[q] = v; pAp += pv[q] * v; }
+    if (!(pAp > 0)) break;
     const al = rz / pAp; rm = 0; for (let q = 0; q < n; q++) { u[q] += al * pv[q]; r[q] -= al * Ap[q]; const v = Math.abs(r[q]); if (v > rm) rm = v; }
-    pre(); let rz2 = 0; for (let q = 0; q < n; q++) rz2 += r[q] * z[q]; const be = rz2 / rz; rz = rz2; for (let q = 0; q < n; q++) pv[q] = z[q] + be * pv[q];
     ctr[0] += 3 * n;
+    if (rm / sc < tol) break; // converged: the next search direction is not needed
+    pre(); let rz2 = 0; for (let q = 0; q < n; q++) rz2 += r[q] * z[q]; const be = rz2 / rz; rz = rz2; for (let q = 0; q < n; q++) pv[q] = z[q] + be * pv[q];
   }
   return rm / sc;
 }
 
 // Coupled transient solve. P: SI parameter object. Returns fields, histories, inventories and solver statistics.
-function znoSim(P, nx, ny, nz, dt, nSteps, full, budget) {
+// drive (optional): function (advance, finalise, peek) that owns the time loop — used by the background full-resolution run to report progress and stop early.
+function znoSim(P, nx, ny, nz, dt, nSteps, full, budget, drive) {
   const ctr = new Float64Array([0, budget]), mk = () => mkGrid(nx, ny, nz, P.Lx, P.Ly, P.Lz, ctr), g = mk(), gT = mk(), gB = mk(), gH = P.hmta ? mk() : null, gP = mk(), n = g.n, nxy = nx * ny, { dx, dy, dz } = g, Vc = dx * dy * dz, Ac = dx * dy;
   const A = v => { const a = new Float64Array(n); if (v) a.fill(v); return a; };
   const cZ = A(P.cZ0), cB = A(P.cB0), cH = A(P.cH0), s = A(), nn = A(), T = A(P.T0), p = A(P.p0), Lr = A(), dr = A();
@@ -187,9 +197,9 @@ function znoSim(P, nx, ny, nz, dt, nSteps, full, budget) {
     const Lm = sn > 0 ? sL / sn : 0, dm = sn > 0 ? sd / sn : 0;
     return { Lm, dm, Lmax: Lx_, dmax: dx_, cvL: Lm > 0 ? Math.sqrt(Math.max(0, sL2 / sn - Lm * Lm)) / Lm : 0, ns: sn / n / P.as, Tm: sT / n, Tx: Tx_, cZ: sZ / n, cB: sB / n, s: ss / n, px: px_ };
   };
-  const mech = () => { // oedometric poro-thermo-elastic column solution (σzz = 0, εxx = εyy = 0)
-    let sx = 0, ux = 0; const sxx = full ? A() : null, uz = full ? A() : null;
-    for (let c = 0; c < nxy; c++) { let u = 0; for (let k = 0; k < nz; k++) { const q = c + k * nxy, th = 3 * P.Kd * (P.aT * (T[q] - P.T0) + P.etaG * s[q] * P.Vm / 3), dp_ = p[q] - P.p0, ez = (P.biot * dp_ + th) / P.Mc, sg = P.lam * ez - P.biot * dp_ - th; u += ez * dz; if (Math.abs(sg) > Math.abs(sx)) sx = sg; if (Math.abs(u) > Math.abs(ux)) ux = u; if (full) { sxx[q] = sg; uz[q] = u; } } }
+  const mech = keep => { // oedometric poro-thermo-elastic column solution (σzz = 0, εxx = εyy = 0); the fields are stored only when asked for
+    let sx = 0, ux = 0; const sxx = keep ? A() : null, uz = keep ? A() : null;
+    for (let c = 0; c < nxy; c++) { let u = 0; for (let k = 0; k < nz; k++) { const q = c + k * nxy, th = 3 * P.Kd * (P.aT * (T[q] - P.T0) + P.etaG * s[q] * P.Vm / 3), dp_ = p[q] - P.p0, ez = (P.biot * dp_ + th) / P.Mc, sg = P.lam * ez - P.biot * dp_ - th; u += ez * dz; if (Math.abs(sg) > Math.abs(sx)) sx = sg; if (Math.abs(u) > Math.abs(ux)) ux = u; if (keep) { sxx[q] = sg; uz[q] = u; } } }
     return { sx, ux, sxx, uz };
   };
   for (let q = 0; q < n; q++) xf[q] = P.weak ? 0.5 * (-KB_NH3 + Math.sqrt(KB_NH3 * KB_NH3 + 4 * KB_NH3 * cB[q])) : cB[q];
@@ -199,14 +209,15 @@ function znoSim(P, nx, ny, nz, dt, nSteps, full, budget) {
 
   const acc = new Float64Array(16); // 0 inZ, 1 inB, 2 inH, 3 consB, 4 srcB, 5 decH, 6 EJ, 7 ER, 8 Eloss, 9 PJ, 10 PR, 11 Jm, 12 σ mean, 13 L mean
   // ---- properties, electrical closure (current continuity per column), kinetics ----
-  const props = Efield => {
-  for (let c = 0; c < nxy; c++) {
-    let Rs = 0;
-    for (let k = 0; k < nz; k++) {
-      const q = c + k * nxy, Tq = T[q], Tc = Tq < 255 ? 255 : Tq > 650 ? 650 : Tq, iT = 1 / Tc, ut = (Tc - T_LO) * iDT, i0 = ut >= NT - 1 ? NT - 2 : ut | 0, wt = ut - i0, fT = tF[i0] + wt * (tF[i0 + 1] - tF[i0]), B = cB[q] > 0 ? cB[q] : 0, z = cZ[q] > 0 ? cZ[q] : 0, sq = s[q];
+  const RsA = new Float64Array(nxy), jcA = new Float64Array(nxy); // series resistance and current density of each column
+  const props = Efield => { // traversed plane by plane (sequential memory access); the column sums accumulate in the same order as a column-wise loop
+  RsA.fill(0);
+  for (let k = 0, q = 0; k < nz; k++) {
+    for (let c = 0; c < nxy; c++, q++) {
+      const Tq = T[q], Tc = Tq < 255 ? 255 : Tq > 650 ? 650 : Tq, iT = 1 / Tc, ut = (Tc - T_LO) * iDT, i0 = ut >= NT - 1 ? NT - 2 : ut | 0, wt = ut - i0, fT = tF[i0] + wt * (tF[i0 + 1] - tF[i0]), B = cB[q] > 0 ? cB[q] : 0, z = cZ[q] > 0 ? cZ[q] : 0, sq = s[q];
       let x = B, sg = 4 * DZ * z + specC;
       if (weak) { const a = 2 * sq / phi + KB_NH3; x = 0.5 * (-a + Math.sqrt(a * a + 4 * KB_NH3 * B)); sg += DOH * x + D_NH4 * (x + 2 * sq / phi); } else sg += DOH * x;
-      xf[q] = x; sg = cF * iT * fT * sg; if (sg < 1e-9) sg = 1e-9; sig[q] = sg; Rs += dz / sg; fTa[q] = fT;
+      xf[q] = x; sg = cF * iT * fT * sg; if (sg < 1e-9) sg = 1e-9; sig[q] = sg; RsA[c] += dz / sg; fTa[q] = fT;
       DZa[q] = tor * DZ * fT; DBa[q] = tor * DBm * fT; if (hmta) { DHa[q] = tor * D_HMTA * fT; KH[q] = tKH[i0] + wt * (tKH[i0 + 1] - tKH[i0]); }
       kap[q] = kappa * (tMu[i0] + wt * (tMu[i0 + 1] - tMu[i0]));
       // kinetics
@@ -232,8 +243,10 @@ function znoSim(P, nx, ny, nz, dt, nSteps, full, budget) {
       KZ[q] = Rg * x * x + Rn / (z > 1e-12 ? z : 1e-12); QZ[q] = rd; Rd[q] = rd;
       KBs[q] = B > 1e-12 ? 2 * (Rg * z * x * x + Rn) / B : 0; QB[q] = 2 * rd + (hmta ? 4 * KH[q] * (cH[q] > 0 ? cH[q] : 0) : 0);
     }
-    const jc = Efield * E0c[c] * Lz / Rs;
-    for (let k = 0; k < nz; k++) { const q = c + k * nxy, E = jc / sig[q], Tq = T[q], Tc = Tq < 255 ? 255 : Tq > 650 ? 650 : Tq, mob = fR / Tc * E; qJ[q] = jc * E; wZ[q] = 2 * mob * DZa[q]; wB[q] = weak ? -mob * tor * DOH * fTa[q] * (cB[q] > 1e-12 ? xf[q] / cB[q] : 0) : -mob * DBa[q]; }
+  }
+  for (let c = 0; c < nxy; c++) jcA[c] = Efield * E0c[c] * Lz / RsA[c];
+  for (let k = 0, q = 0; k < nz; k++) {
+    for (let c = 0; c < nxy; c++, q++) { const jc = jcA[c], E = jc / sig[q], Tq = T[q], Tc = Tq < 255 ? 255 : Tq > 650 ? 650 : Tq, mob = fR / Tc * E; qJ[q] = jc * E; wZ[q] = 2 * mob * DZa[q]; wB[q] = weak ? -mob * tor * DOH * fTa[q] * (cB[q] > 1e-12 ? xf[q] / cB[q] : 0) : -mob * DBa[q]; }
   }
   };
   const bT = gT.b, sdtT = rcp / dt, cSc = 1 / P.cScale, cScB = 1 / P.cScaleB, iTs = 1 / P.T0, betaP = P.betaP, Tinf = P.Tinf;
@@ -259,8 +272,9 @@ function znoSim(P, nx, ny, nz, dt, nSteps, full, budget) {
   };
   const polish = () => { const l1 = relax(g, cZ, P.linTol, P.maxSw), l2 = relax(gB, cB, P.linTol, P.maxSw); product(); const l3 = pcgSym(gT, T, 1e-11, 80); return Math.max(l1, l2, l3 * 100); };
   const latS = tor * Math.max(DZ, DBm) * 4 * dt / Math.min(dx, dy) ** 2 > 0.02, latT = P.kth / rcp * dt / Math.min(dx, dy) ** 2 > 0.02, QH = A();
-  const cZoo = A(P.cZ0), cBoo = A(P.cB0), Too = A(P.T0), soo = A();
-  for (let step = 1; step <= nSteps; step++) {
+  const cZoo = A(P.cZ0), cBoo = A(P.cB0), Too = A(P.T0), soo = A(), ppo = drive ? A(P.p0) : null;
+  let lastIt = 0, lastCh = 0, lastRec = 0, lastFrame = 0;
+  const advance = step => {
     const t = step * dt;
     // ---- sampled-data feedback control (acts on the state at the start of the step) ----
     if (P.ctrlT) { let Tm = 0; for (let q = 0; q < n; q++) Tm += T[q]; Tm /= n; const e = P.Tset - Tm, de = -(Tm - Tprev) / dt, u = P.E0 + P.Kp * e + P.Ki * (integT + e * dt) + P.Kder * de; if ((u > 0 && u < P.Emax) || (u >= P.Emax && e < 0) || (u <= 0 && e > 0)) integT += e * dt; Efield = N.clamp(P.E0 + P.Kp * e + P.Ki * integT + P.Kder * de, 0, P.Emax); Tprev = Tm; if (Math.abs(e) > 0.02 * Math.max(1, Math.abs(P.Tset - P.T0))) tSettle = t; }
@@ -290,12 +304,18 @@ function znoSim(P, nx, ny, nz, dt, nSteps, full, budget) {
     itTot += it; if (it > itMax) itMax = it; if (change > resMax) resMax = change; if (lin > linMax) linMax = lin;
     // ---- pore pressure (one-way coupled to the converged temperature increment) ----
     for (let q = 0; q < n; q++) Qp[q] = betaP * (T[q] - To[q]) / dt;
-    assemble(gP, oP); const rp = 100 * pcgSym(gP, p, 1e-11, 80); if (rp > linMax) linMax = rp;
+    assemble(gP, oP);
+    if (ppo) for (let q = 0; q < n; q++) { const v = p[q]; p[q] = 2 * v - ppo[q]; ppo[q] = v; } // background run only: linear extrapolation in time as the starting guess (same converged solution, fewer iterations)
+    const rp = 100 * pcgSym(gP, p, 1e-11, 80); if (rp > linMax) linMax = rp;
     account(cZb, cBb, cHb);
     const Lm = acc[13]; Gax = (Lm - Lprev) / dt; Lprev = Lm; if (acc[11] > Jpeak) Jpeak = acc[11];
-    if (step % stride === 0 || step === nSteps) record(t, it, change, acc[9], acc[10], acc[11]);
-    if (full && (step % fStride === 0 || step === nSteps)) frame(t);
-  }
+    lastIt = it; lastCh = change;
+    if (step % stride === 0 || step === nSteps) { record(t, it, change, acc[9], acc[10], acc[11]); lastRec = step; }
+    if (full && (step % fStride === 0 || step === nSteps)) { frame(t); lastFrame = step; }
+  };
+  const finalise = nDone => { // nDone < nSteps only when the run was stopped early: close the histories at the time reached
+  if (lastRec !== nDone) record(nDone * dt, lastIt, lastCh, acc[9], acc[10], acc[11]);
+  if (full && lastFrame !== nDone) frame(nDone * dt);
   const inZ = acc[0], inB = acc[1], inH = acc[2], consB = acc[3], srcB = acc[4], decH = acc[5], EJ = acc[6], ER = acc[7], Eloss = acc[8], sigMean = acc[12];
   // ---- conservation residuals ----
   let iZ = 0, iB = 0, iH = 0, iS = 0, dU = 0, minC = Infinity;
@@ -303,7 +323,11 @@ function znoSim(P, nx, ny, nz, dt, nSteps, full, budget) {
   iZ *= P.phi * Vc; iB *= P.phi * Vc; iH *= P.phi * Vc; iS *= Vc; dU *= rcp * Vc;
   const scZ = Math.max(invZ0, Math.abs(inZ), iS, 1e-300), scB = Math.max(invB0, Math.abs(inB), consB, srcB, 1e-300), scE = Math.max(Math.abs(EJ), Math.abs(ER), Math.abs(Eloss), Math.abs(dU), 1e-300);
   const bal = { zn: Math.abs(iZ + iS - invZ0 - inZ) / scZ, oh: Math.abs(iB - invB0 - inB + consB - srcB) / scB, stoich: iS > 0 ? (Math.abs(consB - 2 * iS) + Math.abs(srcB - 4 * decH)) / (2 * iS) : 0, hmta: P.hmta ? Math.abs(iH - invH0 - inH + decH) / Math.max(invH0, Math.abs(inH), 1e-300) : 0, energy: Math.abs(dU - EJ - ER + Eloss) / scE, minC };
-  return { g, H, frames, st: stats(), mech: mech(), fields: { cZ, cB, xf, s, nn, T, p, Lr, dr, sig, qJ }, bal, inv: { invZ0, invB0, invH0, iZ, iB, iH, iS, inZ, inB, inH, consB, srcB, decH, dU, EJ, ER, Eloss }, num: { itTot, itMax, resMax, linMax, swTot, notConv, nSteps, dt, capped, damped }, Jpeak, Efield, dose, tSettle, sigMean, Gax };
+  return { g, H, frames, st: stats(), mech: mech(full), fields: { cZ, cB, xf, s, nn, T, p, Lr, dr, sig, qJ }, bal, inv: { invZ0, invB0, invH0, iZ, iB, iH, iS, inZ, inB, inH, consB, srcB, decH, dU, EJ, ER, Eloss }, num: { itTot, itMax, resMax, linMax, swTot, notConv, nSteps: nDone, dt, capped, damped }, Jpeak, Efield, dose, tSettle, sigMean, Gax };
+  };
+  if (drive) return drive(advance, finalise, () => { let Tx = -1e9; for (let q = 0; q < n; q++) if (T[q] > Tx) Tx = T[q]; return { maxT: Tx, meanLength: acc[13], picardIterations: itTot, residual: lastCh }; });
+  for (let step = 1; step <= nSteps; step++) advance(step);
+  return finalise(nSteps);
 }
 
 const ZNO_KEYS = ['salt', 'base', 'cZn', 'cOH', 'c_hmta', 'k_hmta90', 'Ea_hmta', 'T0', 'Tinf', 'p0', 'Lx', 'Ly', 'Lz', 'phi', 'dgrain', 'kappa', 'DZn', 'DOH', 'kth', 'cp', 'rho', 'h', 'Ea', 'A_pre', 'dH_rxn', 'pKsp', 'Ns', 'site_cv', 'gamma', 'theta', 'w_nuc', 'd_seed', 'beta_aniso', 'E', 'field_nu', 'spectators', 'Emod', 'nu', 'biot', 'cte', 'eta_g', 'bc', 'nx', 'ny', 'nz', 'dt', 't_total', 'max_it', 'ctrl', 'T_set', 'Kp', 'Ki', 'Kd', 'E_max', 'G_set', 'Kg', 'dose_max', 'rod_cv', 'tilt_sd', 'seed'];
@@ -320,7 +344,7 @@ function runZnO(inp) {
   return r0.result;
 }
 
-function buildZnO(inp) {
+function znoParams(inp) {
   const salt = SALTS[inp.salt] || SALTS['Zn(NO3)2'], base = BASES[inp.base] || BASES.NaOH, saltF = SALTS[inp.salt] ? inp.salt : 'Zn(NO3)2', baseF = BASES[inp.base] ? inp.base : 'NaOH';
   const warnings = [];
   const phi = N.clamp(inp.phi, 0.02, 0.98), nu = N.clamp(inp.nu, -0.9, 0.49), Em = inp.Emod * 1e9, Kd = Em / (3 * (1 - 2 * nu)), Gs = Em / (2 * (1 + nu)), Mc = Kd + 4 * Gs / 3, biot = N.clamp(inp.biot, phi, 1);
@@ -338,20 +362,78 @@ function buildZnO(inp) {
     cScale: Math.max(cZ0, 1e-6), cScaleB: Math.max(cB0, 4 * cH0, 1e-6),
     ctrlT: mode === 'temp' || mode === 'both', ctrlG: mode === 'growth' || mode === 'both', Tset: inp.T_set, Kp: inp.Kp, Ki: inp.Ki, Kder: inp.Kd, Emax: inp.E_max, Gset: Math.max(inp.G_set, 1e-6) / 6e10, Kg: inp.Kg, Kig: inp.Kg / 300, doseMax: inp.dose_max,
   };
+  return { P, salt, base, saltF, baseF, warnings, Vm, Gs, Em, nu };
+}
+const relD = (a, b) => Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1e-300);
+const znoConv = s_ => (s_.inv.iS) / Math.max(s_.inv.invZ0 + Math.max(s_.inv.inZ, 0), 1e-300);
+const znoSens = (sim, c1, c2) => ({ dtL: relD(c1.st.Lm, c2.st.Lm), dtT: Math.abs(c1.st.Tx - c2.st.Tx), dtX: relD(znoConv(c1), znoConv(c2)), grL: relD(sim.st.Lm, c1.st.Lm), grT: Math.abs(sim.st.Tx - c1.st.Tx), grX: relD(znoConv(sim), znoConv(c1)) });
+
+function buildZnO(inp) {
+  const Z = znoParams(inp), { P, warnings } = Z;
   const nx = Math.round(N.clamp(inp.nx, 4, 40)), ny = Math.round(N.clamp(inp.ny, 4, 40)), nz = Math.round(N.clamp(inp.nz, 4, 20)), cells = nx * ny * nz;
   let dt = Math.min(inp.dt, inp.t_total), nSteps = Math.max(1, Math.ceil(inp.t_total / dt - 1e-9));
   const cap = Math.max(4, Math.floor(WORK / cells));
-  if (nSteps > cap) { nSteps = cap; warnings.push(`Time step enlarged from ${f(inp.dt)} s to ${f(inp.t_total / nSteps)} s: ${cells} cells × ${Math.ceil(inp.t_total / inp.dt)} steps exceeds the in-browser work budget. Use a coarser grid or shorter duration to run the requested step.`); }
+  if (nSteps > cap) { nSteps = cap; warnings.push(`Time step enlarged from ${f(inp.dt)} s to ${f(inp.t_total / nSteps)} s: ${cells} cells × ${Math.ceil(inp.t_total / inp.dt)} steps exceeds the interactive work budget. Use a coarser grid or shorter duration to run the requested step, or start the full-resolution background run.`); }
   dt = inp.t_total / nSteps;
   const sim = znoSim(P, nx, ny, nz, dt, nSteps, true, SWEEPS);
   // built-in solution-verification indicator: coarse grid at Δt and Δt/2
   const cx = Math.max(4, Math.round(nx / 2)), cy = Math.max(4, Math.round(ny / 2)), cz = Math.max(4, Math.round(nz / 2));
   const c1 = znoSim(P, cx, cy, cz, dt, nSteps, false, SWEEPS / 8), c2 = znoSim(P, cx, cy, cz, dt / 2, nSteps * 2, false, SWEEPS / 4);
-  const rel = (a, b) => Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1e-300);
-  const conv = s_ => (s_.inv.iS) / Math.max(s_.inv.invZ0 + Math.max(s_.inv.inZ, 0), 1e-300);
-  const sens = { dtL: rel(c1.st.Lm, c2.st.Lm), dtT: Math.abs(c1.st.Tx - c2.st.Tx), dtX: rel(conv(c1), conv(c2)), grL: rel(sim.st.Lm, c1.st.Lm), grT: Math.abs(sim.st.Tx - c1.st.Tx), grX: rel(conv(sim), conv(c1)) };
-  const ctx = { inp, P, sim, c1, c2, sens, salt, base, saltF, baseF, warnings, nx, ny, nz, dt, nSteps, cx, cy, cz, Vm, Gs, Em, nu };
+  const ctx = { ...Z, inp, sim, c1, c2, sens: znoSens(sim, c1, c2), nx, ny, nz, dt, nSteps, cx, cy, cz, ttot: inp.t_total };
   return { result: znoResult(ctx), rebuild: () => znoResult(ctx) };
+}
+
+// ---- full-resolution background run (case-study mesh and time step; meant for a Web Worker) ----
+const HIFI = { nx: [100, 4, 240], ny: [100, 4, 240], nz: [10, 4, 60], dt: [0.1, 0.001, 60], tEnd: [1000, 1, 86400], maxWork: 2e9, cmax: 24 };
+// Cost-estimate calibration: about 0.22 s of processor time per step was measured for the 100 × 100 × 10 reference case in Node 20 on a
+// two-core 2.6 GHz laptop processor (memory-bound loops; 0.34–0.49 s per step of wall time while the machine was busy). Faster or idle
+// devices do better, phones worse; the figure is an estimate and the live ETA reported through onProgress supersedes it.
+const HIFI_COST = 2.5e-6 /* s per cell-step */, HIFI_ARRAYS = 96 /* Float64 fields held by the main run (measured) */;
+const hifiGrid = (inp, h = {}) => {
+  const pick = (k, alt) => { const v = Number(h[k] ?? alt); return N.clamp(Number.isFinite(v) ? v : HIFI[k][0], HIFI[k][1], HIFI[k][2]); };
+  const nx = Math.round(pick('nx')), ny = Math.round(pick('ny')), nz = Math.round(pick('nz')), tEnd = pick('tEnd', inp && inp.t_total), dtIn = Math.min(pick('dt'), tEnd);
+  const steps = Math.max(1, Math.ceil(tEnd / dtIn - 1e-9)), dt = tEnd / steps, cells = nx * ny * nz;
+  const cx = Math.max(4, Math.min(HIFI.cmax, Math.round(nx / 2))), cy = Math.max(4, Math.min(HIFI.cmax, Math.round(ny / 2))), cz = Math.max(4, Math.round(nz / 2));
+  return { nx, ny, nz, dt, tEnd, cells, steps, cellSteps: cells * steps, cx, cy, cz, companionCellSteps: 3 * cx * cy * cz * steps };
+};
+/** Cost of the full-resolution run before it is started. Second argument (or inp.hifi) overrides nx, ny, nz, dt, tEnd. estimatedSeconds is an estimate only. */
+export function hifiPlan(inp, h) {
+  const G = hifiGrid(inp || {}, h || (inp && inp.hifi) || {});
+  return { nx: G.nx, ny: G.ny, nz: G.nz, dt: G.dt, tEnd: G.tEnd, cells: G.cells, steps: G.steps, cellSteps: G.cellSteps, estimatedSeconds: HIFI_COST * (G.cellSteps + G.companionCellSteps), memoryMB: (HIFI_ARRAYS * G.cells + 60 * G.cx * G.cy * G.cz) * 8 / 1048576, withinLimits: G.cellSteps <= HIFI.maxWork, maxCellSteps: HIFI.maxWork, companionGrid: [G.cx, G.cy, G.cz] };
+}
+async function runZnOHifi(inp, ctx) {
+  const G = hifiGrid(inp, ctx.hifi), { nx, ny, nz, dt, cx, cy, cz } = G, nSteps = G.steps;
+  if (G.cellSteps > HIFI.maxWork) throw new Error(`Full-resolution run refused: ${nx}×${ny}×${nz} cells × ${nSteps} steps = ${f(G.cellSteps)} cell-steps exceeds the limit of ${f(HIFI.maxWork)}. Use a coarser grid, a larger time step or a shorter duration.`);
+  const Z = znoParams(inp), { P, warnings } = Z;
+  P.tol = 1e-6; P.maxIt = 40; P.maxSw = 40; // tighter coupling tolerance, higher iteration ceilings; no work budget (the inner solvers always run to their tolerances)
+  const now = () => Date.now(), t0 = now(), pause = () => new Promise(r => setTimeout(r, 0));
+  const onP = typeof ctx.onProgress === 'function' ? ctx.onProgress : null, stopAsked = () => !!(ctx.cancelled && ctx.cancelled());
+  let done = 0, last = t0, stopped = false, total = G.cellSteps + G.companionCellSteps;
+  // Owns the time loop of one simulation: reports progress and yields to the event loop about four times a second so a cancel message can arrive.
+  const driver = (cells, steps, dtS, stage, mayStop) => async (advance, finalise, peek) => {
+    let k = 0;
+    while (k < steps) {
+      advance(++k); done += cells;
+      const tn = now();
+      if (tn - last >= 250 || k === steps) {
+        last = tn;
+        if (onP) { const el = (tn - t0) / 1000, pk = peek(); onP({ fraction: Math.min(1, done / total), stage, step: k, steps, simTime: k * dtS, etaSeconds: done > 0 ? el * (total - done) / done : 0, elapsedSeconds: el, maxT: pk.maxT, meanLength: pk.meanLength, picardIterations: pk.picardIterations, residual: pk.residual }); }
+        await pause();
+        if (mayStop && k < steps && stopAsked()) { stopped = true; break; }
+      }
+    }
+    return finalise(k);
+  };
+  const sim = await znoSim(P, nx, ny, nz, dt, nSteps, true, Infinity, driver(G.cells, nSteps, dt, 'main', true));
+  const nDone = sim.num.nSteps, ttot = nDone * dt, cc = cx * cy * cz;
+  total = done + 3 * cc * nDone;
+  if (stopped) warnings.push(`Run stopped by the user at t = ${f(ttot, 6)} s (${nDone} of ${nSteps} steps); all results, balances and checks refer to the time reached, not to the requested ${f(G.tEnd)} s.`);
+  const tMain = (now() - t0) / 1000;
+  // verification companions: coarse grid at the same Δt and at Δt/2, to the time the main run reached
+  const c1 = await znoSim(P, cx, cy, cz, dt, nDone, false, Infinity, driver(cc, nDone, dt, 'coarse companion, Δt', false));
+  const c2 = await znoSim(P, cx, cy, cz, dt / 2, nDone * 2, false, Infinity, driver(cc, nDone * 2, dt / 2, 'coarse companion, Δt/2', false));
+  const wall = (now() - t0) / 1000;
+  return znoResult({ ...Z, inp, sim, c1, c2, sens: znoSens(sim, c1, c2), nx, ny, nz, dt, nSteps: nDone, cx, cy, cz, ttot, hifi: { planned: nSteps, tEnd: G.tEnd, stopped, wall, tMain, dtAsked: Number(ctx.hifi.dt), halved: 2 * cx === nx && 2 * cy === ny } });
 }
 
 function znoChem(saltF, baseF, salt, base, warnings) {
@@ -374,12 +456,12 @@ function znoChem(saltF, baseF, salt, base, warnings) {
 }
 
 function znoResult(C) {
-  const { inp, P, sim, c1, c2, sens, salt, base, saltF, baseF, nx, ny, nz, dt, nSteps, cx, cy, cz } = C, warnings = [...C.warnings];
+  const { inp, P, sim, c1, c2, sens, salt, base, saltF, baseF, nx, ny, nz, dt, nSteps, cx, cy, cz } = C, warnings = [...C.warnings], hf = C.hifi || null;
   const { H, st, bal, inv, num, fields, g } = sim, n = g.n, nxy = nx * ny, vol = P.Lx * P.Ly * P.Lz, area = P.Lx * P.Ly;
   const MZnO = MM('ZnO'), yieldKg = inv.iS * MZnO, znSupplied = inv.invZ0 + Math.max(inv.inZ, 0), conv = N.clamp(inv.iS / Math.max(znSupplied, 1e-300), 0, 1);
   let ty = { moles: 0, limiting: 'Zn2+' }; try { ty = chem.theoreticalYield(['Zn2+', 'OH-'], ['ZnO', 'H2O'], [inv.invZ0, Math.max(inv.invB0 + 4 * inv.invH0, 1e-300)]); } catch (e) { /* keep default */ }
   const yieldFrac = ty.moles > 0 ? inv.iS / ty.moles : 0;
-  const m = sim.mech, sx = Math.abs(m.sx), ux = Math.abs(m.ux), dpMax = st.px - P.p0, Tb = tSat(st.px), ttot = inp.t_total;
+  const m = sim.mech, sx = Math.abs(m.sx), ux = Math.abs(m.ux), dpMax = st.px - P.p0, Tb = tSat(st.px), ttot = C.ttot;
   const PJmean = inv.EJ / ttot, kWhkg = yieldKg > 1e-12 ? inv.EJ / 3.6e6 / yieldKg : 0, aspect = st.dm > 0 ? st.Lm / st.dm : 0, Gmean = st.Lm / ttot;
   const mu = muW(N.clamp(st.Tm, 255, 650)), alphaT = P.kth / P.rhocp, Fo = alphaT * dt / g.dz ** 2, mobZ = 2 * F / (R * P.T0) * P.DZ * Math.sqrt(P.phi) * Math.abs(sim.Efield), mobB = P.weak ? 0 : F / (R * P.T0) * P.DOH * Math.sqrt(P.phi) * Math.abs(sim.Efield);
   const CFL = Math.max(mobZ, mobB) * dt / g.dz, FoZ = P.phi ** 0.5 * P.DZ * dt / g.dz ** 2, Dp = P.kappa / mu / P.Sp, tauT = P.rhocp * P.Lz / (2 * P.h), cover = st.ns * PI / 4 * st.dm ** 2, dphi = st.s * P.Vm;
@@ -405,6 +487,13 @@ function znoResult(C) {
     kpi('dt_sens', 'Time-step sensitivity of mean length', sens.dtL * 100, '%', `Change in mean rod length when the ${cx}×${cy}×${cz} coarse grid is re-run with Δt/2. A value of a few per cent or less indicates the time step is not controlling the answer; it is an indicator, not a convergence proof.`, sens.dtL < 0.05),
     kpi('grid_sens', 'Grid sensitivity of mean length', sens.grL * 100, '%', `Change in mean rod length between the ${nx}×${ny}×${nz} grid and the ${cx}×${cy}×${cz} grid at the same Δt. Large values mean the electromigration fronts (first-order upwind) are under-resolved.`, sens.grL < 0.1),
   ];
+  kpis.push(
+    kpi('len_diff', 'Zn²⁺ diffusion length', lenD, 'm', `√(D_pore·t) with the pore diffusivity φ^0.5·D = ${f(P.phi ** 0.5 * P.DZ)} m²/s (Bruggeman) over ${f(ttot)} s. Compare with the bed thickness ${f(P.Lz)} m: where it is much smaller, the interior is not replenished by diffusion from the boundary.`),
+    kpi('bal_zn', 'Zinc balance residual', bal.zn, '–', 'Relative closure error of the zinc inventory: |pores + ZnO − initial − boundary inflow| divided by the largest of those terms. The finite-volume scheme conserves zinc to solver tolerance, so anything above 10⁻⁶ indicates an unconverged run.', bal.zn < 1e-6),
+    kpi('bal_oh', 'Hydroxide balance residual', bal.oh, '–', 'Relative closure error of the base inventory including boundary flux, reaction sink and (for HMTA) the hydrolysis source. Values above 10⁻⁶ indicate an unconverged run.', bal.oh < 1e-6),
+    kpi('bal_energy', 'Energy balance residual', bal.energy, '–', 'Relative closure error of stored heat = Joule heat + reaction heat − convective loss, integrated over the run. Values above 10⁻⁶ indicate unconverged temperature solves.', bal.energy < 1e-6),
+    kpi('oh_per_zno', 'OH⁻ consumed per ZnO formed', inv.iS > 0 ? inv.consB / inv.iS : 0, 'mol/mol', 'Integrated hydroxide sink divided by the ZnO formed; the net reaction Zn²⁺ + 2 OH⁻ → ZnO + H₂O requires exactly 2. The deviation is set by the Picard coupling tolerance (reported as 0 when no ZnO has formed).', inv.iS > 0 ? Math.abs(inv.consB / inv.iS - 2) < 2e-3 : null),
+  );
   if (ctrlOn) kpis.push(kpi('ctrl_signal', P.ctrlT ? 'Final controlled field' : 'Final dosing multiplier', P.ctrlT ? sim.Efield : sim.dose, P.ctrlT ? 'V/m' : '×', P.ctrlT ? `Electric field commanded by the PID loop at the end of the run to hold ${f(P.Tset)} K; the last excursion beyond 2 % of the step occurred at ${f(settle)} s.` : `Factor applied to the prescribed bottom concentrations by the PI dosing loop to hold ${f(inp.G_set)} nm/min.`));
 
   const t = H.t, L = (name, y) => ({ name, x: t, y });
@@ -420,9 +509,11 @@ function znoResult(C) {
     ser('solver', 'Nonlinear solver history', 'time (s)', 'iterations / residual', [L('Picard iterations', H.it), L('log₁₀ final update', H.res.map(v => Math.log10(v)))], 'Fixed-point iterations per time step and the size of the last update (relative, max-norm). Steps that hit the iteration cap are counted in the checks.'),
   ];
   const kmid = Math.floor(nz / 2), jmid = Math.floor(ny / 2);
-  const plane = (a, sc = 1) => { const d = new Float64Array(nxy); for (let c = 0; c < nxy; c++) d[c] = a[c + kmid * nxy] * sc; return d; };
-  const slice = (a, sc = 1, off = 0) => { const d = new Float64Array(nx * nz); for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) d[i + nx * k] = (a[i + nx * (jmid + ny * k)] - off) * sc; return d; };
-  const mp = (key, title, data, unit, explain, vert) => ({ key, title, nx, ny: vert ? nz : ny, data, x0: 0, x1: P.Lx, y0: 0, y1: vert ? P.Lz : P.Ly, xlabel: 'x (m)', ylabel: vert ? 'z (m)' : 'y (m)', unit, explain, diverging: false });
+  // maps are block-averaged to at most 120 × 120 pixels (factor 1 on every interactive grid); KPIs always use the full fields
+  const bx = Math.ceil(nx / 120), by = Math.ceil(ny / 120), mx = Math.ceil(nx / bx), my = Math.ceil(ny / by);
+  const plane = (a, sc = 1) => { const d = new Float64Array(mx * my), w = new Float64Array(mx * my); for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const m = ((i / bx) | 0) + mx * ((j / by) | 0); d[m] += a[i + nx * j + kmid * nxy]; w[m]++; } for (let m = 0; m < d.length; m++) d[m] = d[m] / w[m] * sc; return d; };
+  const slice = (a, sc = 1, off = 0) => { const d = new Float64Array(mx * nz), w = new Float64Array(mx * nz); for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) { const m = ((i / bx) | 0) + mx * k; d[m] += a[i + nx * (jmid + ny * k)]; w[m]++; } for (let m = 0; m < d.length; m++) d[m] = (d[m] / w[m] - off) * sc; return d; };
+  const mp = (key, title, data, unit, explain, vert) => ({ key, title, nx: mx, ny: vert ? nz : my, data, x0: 0, x1: P.Lx, y0: 0, y1: vert ? P.Lz : P.Ly, xlabel: 'x (m)', ylabel: vert ? 'z (m)' : 'y (m)', unit, explain, diverging: false });
   const maps = [
     mp('T_mid', 'Temperature, mid-plane', plane(fields.T), 'K', 'Horizontal mid-plane temperature at the end of the run; edges are cooler through side-wall convection and the field profile.'),
     mp('L_mid', 'Rod length, mid-plane', plane(fields.Lr, 1e9), 'nm', 'Cell-average rod length on the horizontal mid-plane; the texture follows the seeded site-density field and the temperature map.'),
@@ -459,7 +550,7 @@ function znoResult(C) {
     chk('1:2 stoichiometry closure (OH⁻ consumed vs 2 × ZnO formed)', bal.stoich < 1e-3, `relative mismatch ${f(bal.stoich)} (set by the Picard tolerance)`),
     chk('Energy balance (storage = Joule + reaction − convection)', bal.energy < tolBal, `relative residual ${f(bal.energy)}`),
     chk('Positivity of concentrations', bal.minC >= 0, `minimum concentration ${f(bal.minC)} mol/m³`),
-    chk('Nonlinear (Picard) convergence', num.resMax < 1e-3, `${num.itTot} iterations over ${num.nSteps} steps (max ${num.itMax}/step, ${num.damped} under-relaxed); ${num.notConv} step(s) ended above the 1×10⁻⁴ tolerance; largest final relative update ${f(num.resMax)} (pass limit 1×10⁻³)`),
+    chk('Nonlinear (Picard) convergence', num.resMax < 10 * P.tol, `${num.itTot} iterations over ${num.nSteps} steps (max ${num.itMax}/step, ${num.damped} under-relaxed); ${num.notConv} step(s) ended above the ${f(P.tol)} tolerance; largest final relative update ${f(num.resMax)} (pass limit ${f(10 * P.tol)})`),
     chk('Linear solves', num.linMax < 1e-8, `largest relative residual ${f(num.linMax)} after line relaxation (${f(num.swTot)} sweep-equivalents in total)`),
     chk('Below boiling limit at pore pressure', st.Tx < Tb, `T_max ${f(st.Tx, 4)} K vs T_sat ${f(Tb, 4)} K`),
     chk('Time-step sensitivity indicator (Δt vs Δt/2, coarse grid)', sens.dtL < 0.05 && sens.dtT < 1, `mean length ${f(sens.dtL * 100)} %, T_max ${f(sens.dtT)} K, conversion ${f(sens.dtX * 100)} %`),
@@ -481,6 +572,8 @@ function znoResult(C) {
   if (cover >= 0.9) warnings.push('Rods have coalesced on the pore surface (projected coverage ≥ 0.9); the isolated-rod closure is no longer valid — a film is forming.');
   if (st.Lmax > 0.25 * inp.dgrain * 1e-3 * P.phi) warnings.push('Rod length is a significant fraction of the pore size; pore clogging and evolving porosity (not modelled) will matter.');
   if (dphi > 0.05 * P.phi) warnings.push(`Deposited ZnO fills ${f(dphi / P.phi * 100)} % of the pore space; porosity is kept constant in the transport operators.`);
+  if (hf && !hf.halved) warnings.push(`The verification companions of the full-resolution run use a ${cx}×${cy}×${cz} grid (capped in plan to keep their cost to a few per cent of the job), not exactly half the main resolution; the grid indicator therefore spans a larger refinement ratio than in the interactive run.`);
+  if (hf && Number.isFinite(hf.dtAsked) && Math.abs(hf.dtAsked - dt) > 1e-9 * dt) warnings.push(`Time step set to ${f(dt, 6)} s (requested ${f(hf.dtAsked, 6)} s) so that a whole number of steps ends exactly at the requested duration, or because the requested value was outside 0.001–60 s.`);
   if (base.weak) warnings.push('Weak-base route: the transported base field is total ammonia + hydroxide with a local buffer equilibrium; ammonium is assumed to stay where it is formed.');
   if (sens.dtL >= 0.05 || sens.grL >= 0.1) warnings.push('The built-in sensitivity indicators show a visible dependence on time step or grid; a single mesh/time-step is not convergence evidence — refine before drawing conclusions.');
 
@@ -520,7 +613,7 @@ function znoResult(C) {
     reactor: { size_m: [P.Lx, P.Ly, P.Lz], porosity: P.phi, grain_size_mm: inp.dgrain, permeability_m2: P.kappa, boundary_set: inp.bc },
     operating: { T_initial_K: P.T0, T_ambient_K: P.Tinf, pressure_Pa: P.p0, field_V_m: P.E0, duration_s: ttot, control: inp.ctrl, T_setpoint_K: P.ctrlT ? P.Tset : null, growth_setpoint_nm_min: P.ctrlG ? inp.G_set : null },
     predicted: { mean_length_nm: st.Lm * 1e9, mean_diameter_nm: st.dm * 1e9, aspect_ratio: aspect, nonuniformity_pct: st.cvL * 100, conversion: conv, ZnO_kg: yieldKg, T_max_K: st.Tx, joule_kWh: inv.EJ / 3.6e6, max_stress_Pa: sx },
-    numerics: { grid: [nx, ny, nz], dt_s: dt, steps: nSteps, sensitivity: sens }, status: 'model prediction with uncalibrated closures — confirm experimentally',
+    numerics: { grid: [nx, ny, nz], dt_s: dt, steps: nSteps, sensitivity: sens, full_resolution_run: !!hf }, status: 'model prediction with uncalibrated closures — confirm experimentally',
   };
   const txt = [`RECIPE — ZnO nanorods, hydrothermal, ${salt.name} + ${base.name}`, `1. Prepare ${f(P.phi * vol * 1e3)} L of solution: ${f(P.cZ0 / 1e3)} mol/L ${chem.prettyFormula(saltF)} (${f(P.cZ0 * MM(saltF) * P.phi * vol * 1e3)} g)` + (base.hmta ? ` and ${f(P.cH0 / 1e3)} mol/L HMTA (${f(P.cH0 * 0.14019 * P.phi * vol * 1e3)} g).` : ` and ${f(P.cB0 / 1e3)} mol/L ${chem.prettyFormula(baseF)}.`),
     `2. Fill the seeded porous bed (${f(P.Lx)} × ${f(P.Ly)} × ${f(P.Lz)} m, porosity ${f(P.phi)}) at ${f(P.T0 - 273.15)} °C and ${f(P.p0)} Pa.`,
@@ -529,13 +622,14 @@ function znoResult(C) {
     '5. Cool, drain, rinse with deionised water until conductivity is stable, dry at 60–80 °C.', 'Status: model prediction with uncalibrated kinetic closures; verify by SEM and ICP before scale-up.'].join('\n');
   const csv = ['t_s,cZn_mol_m3,cOH_mol_m3,cZnO_mol_m3,T_mean_K,T_max_K,L_mean_nm,d_mean_nm,nuclei_per_m2,growth_nm_min,p_max_Pa,stress_max_Pa,u_max_m,E_V_m,dose,P_joule_W,P_rxn_W,picard_iters'].concat(t.map((tv, i) => [tv, H.cZ[i], H.cB[i], H.s[i], H.Tm[i], H.Tx[i], H.L[i], H.d[i], H.ns[i], H.G[i], H.px[i], H.sx[i], H.ux[i], H.E[i], H.dose[i], H.PJ[i], H.PR[i], H.it[i]].map(v => +(+v).toPrecision(7)).join(','))).join('\n');
 
-  const summary = `After ${f(ttot)} s the bed holds ZnO rods of mean length ${f(st.Lm * 1e9)} nm and diameter ${f(st.dm * 1e9)} nm (aspect ratio ${f(aspect)}, non-uniformity ${f(st.cvL * 100)} %) at ${f(st.ns)} nuclei/m², with ${f(conv * 100)} % zinc conversion and ${f(yieldKg * 1e3)} g of ZnO. ` +
+  const summary = (hf ? `Full-resolution background run on the ${nx}×${ny}×${nz} grid with Δt = ${f(dt)} s (${nSteps} backward-Euler steps${hf.stopped ? `, stopped by the user at t = ${f(ttot, 6)} s of the requested ${f(hf.tEnd)} s` : ''}). ` : '') + `After ${f(ttot)} s the bed holds ZnO rods of mean length ${f(st.Lm * 1e9)} nm and diameter ${f(st.dm * 1e9)} nm (aspect ratio ${f(aspect)}, non-uniformity ${f(st.cvL * 100)} %) at ${f(st.ns)} nuclei/m², with ${f(conv * 100)} % zinc conversion and ${f(yieldKg * 1e3)} g of ZnO. ` +
     `The ${f(sim.Efield)} V/m field dissipates ${f(PJmean)} W on average and the bed peaks at ${f(st.Tx)} K (${st.Tx < Tb ? 'below' : 'ABOVE'} the ${f(Tb)} K boiling limit); peak excess pore pressure is ${f(dpMax)} Pa and lateral stress ${f(sx / 1e3)} kPa. ` +
     `Zinc and energy balances close to ${f(Math.max(bal.zn, bal.energy))} relative; halving the time step on the coarse grid changes the mean length by ${f(sens.dtL * 100)} %. Kinetic closures are uncalibrated, so treat the dimensions as model predictions.`;
   return finish({
     summary, kpis, series, maps, tables, equations, geometry, checks, warnings, recommendations: recs, publish,
     exports: [{ name: 'zno_reactor_recipe.json', mime: 'application/json', content: JSON.stringify(recipe, null, 2), description: 'Machine-readable recipe: chemistry, reactor, operating conditions, predictions and numerical settings.' }, { name: 'zno_reactor_recipe.txt', mime: 'text/plain', content: txt, description: 'Human-readable step-by-step recipe with predicted outcome.' }, { name: 'zno_reactor_history.csv', mime: 'text/csv', content: csv, description: 'Time histories of species, temperature, growth, pressure, stress, control signals and solver iterations.' }],
-    numerics: { method: 'Finite-volume, backward Euler; Picard-coupled fields (Patankar-implicit reaction sinks, first-order upwind electromigration); line-implicit (Thomas) relaxation for species, z-line-preconditioned conjugate gradients for temperature and pressure', dof: n * (P.hmta ? 8 : 7), steps: nSteps, iterations: num.itTot, residual: num.resMax, notes: `Grid ${nx}×${ny}×${nz}, Δt = ${f(dt)} s; Fourier ${f(Fo)}, Courant ${f(CFL)}; linear residual ≤ ${f(num.linMax)}; verification indicator from two extra ${cx}×${cy}×${cz} runs (Δt, Δt/2).` },
+    numerics: { method: 'Finite-volume, backward Euler; Picard-coupled fields (Patankar-implicit reaction sinks, first-order upwind electromigration); line-implicit (Thomas) relaxation for species, z-line-preconditioned conjugate gradients for temperature and pressure', dof: n * (P.hmta ? 8 : 7), steps: nSteps, iterations: num.itTot, residual: num.resMax, notes: `Grid ${nx}×${ny}×${nz}, Δt = ${f(dt)} s; Fourier ${f(Fo)}, Courant ${f(CFL)}; linear residual ≤ ${f(num.linMax)}; verification indicator from two extra ${cx}×${cy}×${cz} runs (Δt, Δt/2).` + (hf ? ` Full-resolution run: ${n} cells, ${nSteps} of ${hf.planned} planned steps, ${num.itTot} Picard iterations in total (mean ${f(num.itTot / Math.max(nSteps, 1))} per step, max ${num.itMax}), coupling tolerance ${f(P.tol)}, largest final Picard update ${f(num.resMax)}, largest linear residual ${f(num.linMax)}, balance residuals Zn ${f(bal.zn)} / OH ${f(bal.oh)} / energy ${f(bal.energy)}; wall time ${f(hf.wall)} s (${f(hf.tMain)} s main run, ${f(hf.tMain / Math.max(nSteps, 1) * 1e3)} ms per step).` : ''),
+      ...(hf ? { fullResolution: true, grid: [nx, ny, nz], cells: n, dt, stepsPlanned: hf.planned, simulatedTime: ttot, stopped: hf.stopped, picardIterations: num.itTot, picardMaxPerStep: num.itMax, picardTolerance: P.tol, picardResidual: num.resMax, linearResidual: num.linMax, balanceResiduals: { zinc: bal.zn, hydroxide: bal.oh, energy: bal.energy, stoichiometry: bal.stoich }, wallSeconds: hf.wall, wallSecondsMain: hf.tMain, secondsPerStep: hf.tMain / Math.max(nSteps, 1), companionGrid: [cx, cy, cz] } : {}) },
   });
 }
 const ZI = (o) => ({ group: 'ZnO reactor', showIf: { mode: ['zno_reactor'] }, ...o });
@@ -595,10 +689,10 @@ const INPUTS = [
   ZI({ key: 'G_set', label: 'Growth-rate set-point', unit: 'nm/min', value: 5, min: 0.01, max: 1000, log: true, group: 'Control', showIf: { mode: ['zno_reactor'], ctrl: ['growth', 'both'] }, help: 'Target mean axial growth rate for the dosing loop.' }),
   ZI({ key: 'Kg', label: 'Dosing proportional gain', unit: '–', value: 1, min: 0, max: 20, group: 'Control', showIf: { mode: ['zno_reactor'], ctrl: ['growth', 'both'] }, help: 'Change of the bottom-concentration multiplier per unit relative growth-rate error (integral time fixed at 300 s).' }),
   ZI({ key: 'dose_max', label: 'Maximum dosing multiplier', unit: '×', value: 5, min: 1, max: 50, group: 'Control', showIf: { mode: ['zno_reactor'], ctrl: ['growth', 'both'] }, help: 'Upper limit of the boundary concentration relative to the nominal value (feed-tank strength).' }),
-  ZI({ key: 'nx', label: 'Cells in x', value: 20, min: 4, max: 40, step: 1, sens: false, group: 'Numerics', help: 'Grid cells along x. The reference description quotes 100 × 100 × 10 nodes; the in-browser default is coarser and the sensitivity indicator reports the effect.' }),
+  ZI({ key: 'nx', label: 'Cells in x', value: 20, min: 4, max: 40, step: 1, sens: false, group: 'Numerics', help: 'Grid cells along x. The reference description quotes 100 × 100 × 10 nodes; the interactive default is coarser and the sensitivity indicator reports the effect; the full-resolution background run uses the quoted mesh.' }),
   ZI({ key: 'ny', label: 'Cells in y', value: 20, min: 4, max: 40, step: 1, sens: false, group: 'Numerics', help: 'Grid cells along y.' }),
   ZI({ key: 'nz', label: 'Cells in z', value: 10, min: 4, max: 20, step: 1, sens: false, group: 'Numerics', help: 'Grid cells through the thickness, the direction with the steep gradients.' }),
-  ZI({ key: 'dt', label: 'Time step', unit: 's', value: 40, min: 0.05, max: 600, log: true, sens: false, group: 'Numerics', help: 'Backward-Euler step. The reference nominal value is 0.1 s; larger steps are stable but less accurate, and the step is enlarged automatically if the work budget is exceeded.' }),
+  ZI({ key: 'dt', label: 'Time step', unit: 's', value: 40, min: 0.05, max: 600, log: true, sens: false, group: 'Numerics', help: 'Backward-Euler step. The reference nominal value is 0.1 s; larger steps are stable but less accurate, and in the interactive run the step is enlarged automatically if the work budget is exceeded (the full-resolution background run never enlarges it).' }),
   ZI({ key: 't_total', label: 'Total simulated time', unit: 's', value: 1000, min: 10, max: 172800, log: true, bus: 'proc.time', group: 'Numerics', help: 'Process duration.' }),
   ZI({ key: 'max_it', label: 'Picard iteration cap per step', value: 10, min: 2, max: 12, step: 1, sens: false, group: 'Numerics', help: 'Maximum coupling iterations per time step (tolerance 10⁻⁴ on the relative update of concentrations and temperature).' }),
   ZI({ key: 'rod_cv', label: 'Rod-to-rod size scatter (display)', unit: '%', value: 15, min: 0, max: 60, sens: false, group: 'Display', help: 'Log-normal scatter applied when sampling individual rods for the 3-D view; it does not affect the simulation.' }),
@@ -623,7 +717,10 @@ function runCVD(inp) {
   const Tk = inp.cvd_T + 273.15, P = inp.cvd_P, U = inp.cvd_U, Ls = inp.cvd_L, Hc = inp.cvd_H, mp = MM(c.r[0]) / NA, Nf = c.rho * NA / MM(c.film);
   const at = T => { const D = c.D0 * (T / 300) ** 1.75 * 101325 / P, mu = gas.mu0 * (T / 300) ** 0.7, rg = P * gas.M / (R * T), vbar = Math.sqrt(8 * KB * T / (PI * mp)), ksT = Math.min(c.k0 * Math.exp(-c.Ea / (R * T)), vbar / 4), ks = pe ? inp.cvd_s * vbar / 4 : ksT, Re = rg * U * Ls / mu, Sc = mu / (rg * D), hfd = 4.86 * D / (2 * Hc), hg = Math.max(0.664 * D / Ls * Math.sqrt(Re) * Sc ** (1 / 3), hfd); return { D, mu, rg, vbar, ks, Re, Sc, hfd, hg, C0: inp.cvd_x * P / (KB * T) }; };
   const a = at(Tk), ns = 120, dxs = Ls / ns, xs = [], rate = []; let C = a.C0;
-  for (let i = 0; i < ns; i++) { const x = (i + 0.5) * dxs, hx = Math.max(0.332 * a.D / x * Math.sqrt(a.rg * U * x / a.mu) * a.Sc ** (1 / 3), a.hfd), K = a.ks * hx / (a.ks + hx), Cn = C * Math.exp(-K * dxs / (U * Hc)); xs.push(x * 1e3); rate.push(U * Hc * (C - Cn) / (dxs * Nf)); C = Cn; }
+  // local h(x) = cK/√x (laminar boundary layer), floored at the fully developed value beyond x*; K = k_s h/(k_s + h) is integrated exactly over each segment
+  const cK = 0.332 * a.D * Math.sqrt(a.rg * U / a.mu) * a.Sc ** (1 / 3), xStar = (cK / a.hfd) ** 2, Kfd = a.ks * a.hfd / (a.ks + a.hfd);
+  const IK = (x0, x1) => { const u0 = Math.sqrt(x0), u1 = Math.sqrt(x1); return 2 * cK * (u1 - u0 - cK / a.ks * Math.log((1 + a.ks * u1 / cK) / (1 + a.ks * u0 / cK))); };
+  for (let i = 0; i < ns; i++) { const xa = i * dxs, xb = xa + dxs, x = xa + 0.5 * dxs, K = ((xa < xStar ? IK(xa, Math.min(xb, xStar)) : 0) + (xb > xStar ? Kfd * (xb - Math.max(xa, xStar)) : 0)) / dxs, Cn = C * Math.exp(-K * dxs / (U * Hc)); xs.push(x * 1e3); rate.push(U * Hc * (C - Cn) / (dxs * Nf)); C = Cn; }
   const rMean = N.mean(rate), rMax = N.maxOf(rate), rMin = N.minOf(rate), unif = rMean > 0 ? (rMax - rMin) / (2 * rMean) * 100 : 0, thick = rMean * inp.cvd_t, util = 1 - C / a.C0, Da = a.ks / a.hg;
   const regime = Da > 10 ? 'mass-transport limited' : Da < 0.1 ? 'surface-reaction limited' : 'mixed control', stick = Math.min(1, 4 * a.ks / a.vbar), sc = 1 / Math.cosh(inp.cvd_AR * Math.sqrt(3 * stick));
   const lam = KB * Tk / (Math.SQRT2 * PI * (3.5e-10) ** 2 * P), Kn = lam / Hc;
@@ -1252,7 +1349,7 @@ export default {
   tagline: 'Simulates synthesis and fabrication processes — a coupled 3-D hydrothermal ZnO nanorod reactor with field heating, plus CVD, ALD, PVD, lithography/etch, additive, sol–gel/sintering and electrospinning models — and exports operating recipes.',
   inputs: INPUTS,
   presets: [
-    { name: 'ZnO nanorods — porous reactor reference case (1000 V/m, 1000 s)', note: 'Case-study inputs: Zn²⁺ 0.01 mol/L, OH⁻ 0.02 mol/L, 298 K, 101 325 Pa, porosity 0.25, 1 m × 1 m × 0.01 m, h = 50 W/m²K. Runs on a 20×20×10 grid with Δt = 40 s; the nominal 100×100×10 mesh and 0.1 s step are beyond an in-browser run, so use the sensitivity indicators.', values: { mode: 'zno_reactor' } },
+    { name: 'ZnO nanorods — porous reactor reference case (1000 V/m, 1000 s)', note: 'Case-study inputs: Zn²⁺ 0.01 mol/L, OH⁻ 0.02 mol/L, 298 K, 101 325 Pa, porosity 0.25, 1 m × 1 m × 0.01 m, h = 50 W/m²K. The interactive run uses a 20×20×10 grid with Δt = 40 s and reports sensitivity indicators; the nominal 100×100×10 mesh with the 0.1 s step is available as the full-resolution background run.', values: { mode: 'zno_reactor' } },
     { name: 'ZnO reference case at the nominal Δt = 0.1 s (first 50 s, coarse plan grid)', note: 'Same physics with the case-study time step of 0.1 s on a 4×4×10 grid for the first 50 s, to compare early-time behaviour against the larger default step.', values: { mode: 'zno_reactor', dt: 0.1, t_total: 50, nx: 4, ny: 4, nz: 10 } },
     { name: 'ZnO nanorods — laboratory recipe, Zn(NO₃)₂ + HMTA, 90 °C, 3 h', note: 'Classic equimolar 25 mmol/L zinc nitrate / HMTA bath in a 90 °C oven without field, closed batch in an open (90 % porous) seeded scaffold. The rate pre-factor is an illustrative calibration.', values: { mode: 'zno_reactor', base: 'HMTA', cZn: 25, c_hmta: 25, Tinf: 363.15, E: 0, field_nu: 0, t_total: 10800, dt: 180, nx: 8, ny: 8, phi: 0.9, biot: 0.95, dgrain: 2, bc: 'batch', Lx: 0.05, Ly: 0.05, A_pre: 3000, Emod: 0.2 } },
     { name: 'ZnO nanorods — field-assisted growth with PID temperature hold and dosing', note: 'Feedback-optimised synthesis: the field is modulated to hold 328 K and the bottom concentrations are dosed to hold 6 nm/min axial growth.', values: { mode: 'zno_reactor', ctrl: 'both', T_set: 328, t_total: 2000, dt: 25, nx: 10, ny: 10, G_set: 6, E: 1200, E_max: 3000, Kp: 100, Ki: 0.5 } },
@@ -1263,8 +1360,13 @@ export default {
     { name: 'Micro-lattice mechanical metamaterial by two-photon polymerisation', note: '100 µm lattice block with 10 µm cells written at NA 1.4.', values: { mode: 'additive', am_proc: 'tpp', am_cell: 0.01, am_rd: 0.1 } },
     { name: 'Sol–gel SiO₂ nanofilm: spin, dry, sinter', note: 'TEOS-derived silica film on a wafer with cracking check and densification.', values: { mode: 'solgel_spin_sinter' } },
   ],
-  run(inp) {
+  hifi: { label: 'Full-resolution run (case-study mesh 100 × 100 × 10, Δt 0.1 s)', modes: ['zno_reactor'], inputs: [
+    { key: 'nx', label: 'Nodes in x', value: 100, min: 4, max: 240 }, { key: 'ny', label: 'Nodes in y', value: 100, min: 4, max: 240 }, { key: 'nz', label: 'Nodes in z', value: 10, min: 4, max: 60 },
+    { key: 'dt', label: 'Time step', unit: 's', value: 0.1, min: 0.001, max: 60 }, { key: 'tEnd', label: 'Simulated duration', unit: 's', value: 1000, min: 1, max: 86400 }] },
+  // ctx.hifi = {nx, ny, nz, dt, tEnd} switches the ZnO reactor to the uncapped background run (asynchronous; reports ctx.onProgress and honours ctx.cancelled()).
+  run(inp, ctx) {
     const fn = RUNNERS[inp.mode] || runZnO;
+    if (fn === runZnO && ctx && ctx.hifi && typeof ctx.hifi === 'object') return runZnOHifi(inp, ctx);
     return fn(inp);
   },
 };

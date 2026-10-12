@@ -40,12 +40,14 @@ export function validateInputs(suite, values) {
 
 // Eight qualification gates. Only evidence the platform can actually observe is scored automatically; gates that need
 // experimental evidence stay open until the user records it in Suite 24.
+export const benchStatus = {};
 export function assessGates(suite, values, result, origin) {
   const checks = result.checks || [], failed = checks.filter(c => !c.pass), assumed = Object.values(origin || {}).filter(o => o === 'default').length, total = Object.keys(origin || {}).length || 1;
   const cred = project.bus, g = [];
   g.push({ id: 1, name: 'Input data quality', status: assumed === 0 ? 'pass' : assumed / total > 0.6 ? 'open' : 'partial', detail: `${total - assumed} of ${total} inputs supplied by the user or linked from other suites; ${assumed} still at library defaults. Units are fixed per field.` });
   g.push({ id: 2, name: 'Mathematical and model consistency', status: failed.length ? 'fail' : 'pass', detail: failed.length ? `${failed.length} physical/admissibility check(s) failed: ${failed.map(c => c.name).join('; ')}` : `${checks.length} conservation / admissibility checks passed for this run.` });
-  g.push({ id: 3, name: 'Code verification', status: 'partial', detail: 'Kernel solvers are regression-tested against analytical solutions in the built-in test suite; run Suite 24 “solution verification” to reproduce the observed order of accuracy on this device.' });
+  const bm = benchStatus[suite.id];
+  g.push({ id: 3, name: 'Code verification', status: bm ? (bm.passed === bm.total ? 'pass' : 'partial') : 'partial', detail: bm ? `${bm.passed} of ${bm.total} independent reference benchmarks reproduced on this device (worst deviation ${(bm.worst * 100).toFixed(2)} %). They cover the suite's models, not your specific case.` : 'This suite ships independent reference benchmarks (analytical solutions and handbook data). Run them from the Credibility tab to verify the solvers on this device.' });
   const gci = cred['cred.gci'];
   g.push({ id: 4, name: 'Solution verification', status: gci ? (gci.value < 0.05 ? 'pass' : 'partial') : (result.numerics && result.numerics.residual !== undefined ? 'partial' : 'open'), detail: gci ? `Grid-convergence index ${(gci.value * 100).toFixed(2)} % recorded in Suite 24.` : 'Solver residuals are reported, but no mesh / time-step convergence study has been recorded for this case.' });
   g.push({ id: 5, name: 'Parameter calibration', status: (cred['cred.calibrated'] || cred['cred.cal_rmse']) ? 'pass' : 'open', detail: (cred['cred.calibrated'] || cred['cred.cal_rmse']) ? 'Calibrated parameters recorded in Suite 24.' : 'Model parameters are handbook / literature-typical values, not calibrated to your measurements.' });
@@ -53,6 +55,7 @@ export function assessGates(suite, values, result, origin) {
   g.push({ id: 7, name: 'Predictive robustness', status: project.runs[suite.id]?.sensitivity ? 'partial' : 'open', detail: project.runs[suite.id]?.sensitivity ? 'A sensitivity / uncertainty study has been run for this suite.' : 'Run the sensitivity and uncertainty tabs to see how input scatter moves the result.' });
   g.push({ id: 8, name: 'Application-specific qualification', status: 'open', detail: 'Requires documented review for the intended engineering use; never granted automatically.' });
   let level = 'Theoretical prediction — not verified';
+  if (bm && bm.passed === bm.total && g[1].status === 'pass') level = `Solver benchmarked against ${bm.total} reference results — case not yet validated`;
   if (g[1].status === 'pass' && g[3].status !== 'open') level = 'Numerically checked for this case';
   if (g[1].status === 'pass' && g[4].status === 'pass') level = 'Calibrated against identified datasets';
   if (g[1].status === 'pass' && g[4].status === 'pass' && g[5].status !== 'open') level = 'Compared with independent measurements';
@@ -64,7 +67,12 @@ export async function runSuite(id, values, { origin = {}, record = true } = {}) 
   const suite = await loadSuite(id); await loadSpec();
   const errs = validateInputs(suite, values); if (errs.length) { const e = new Error(errs.join('\n')); e.validation = errs; throw e; }
   const ctx = { bus: busValues(), spec: SPEC.suites[id - 1], project: { name: project.name } }, t0 = performance.now();
-  const result = await suite.run({ ...values }, ctx), runtime = performance.now() - t0, at = new Date().toISOString();
+  const result = await suite.run({ ...values }, ctx);
+  return finishRun(suite, id, values, result, performance.now() - t0, { origin, record });
+}
+// Shared post-processing for interactive and background (worker) runs.
+export function finishRun(suite, id, values, result, runtime, { origin = {}, record = true } = {}) {
+  const at = new Date().toISOString();
   result.runtime_ms = runtime; result.at = at; result.inputs = { ...values }; result.origin = origin;
   result.credibility = assessGates(suite, values, result, origin);
   if (record) {

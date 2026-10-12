@@ -710,7 +710,7 @@ function runFilm(v) {
   const nv = 32, nzB = 20, nz = 28, data = new Uint8Array(nv * nv * nz), bounds = []; let acc = 0; for (const l of layers) { acc += l.t; bounds.push(acc / total * nzB); }
   const amp = max(rq / total * nzB, 1.2) / (rq || 1) * 1.0;
   for (let j = 0; j < nv; j++) for (let i = 0; i < nv; i++) { const topZ = nzB + h[(j * 2) * n + i * 2] * amp; for (let k = 0; k < nz; k++) { if (k + 0.5 > topZ) break; let p = layers.length; for (let b = 0; b < bounds.length; b++) if (k + 0.5 <= bounds[b]) { p = b + 1; break; } data[i + nv * (j + nv * k)] = p; } }
-  const stackEq = layers.map(l => eqn('formula', `Layer: ${l.name}`, `${l.pretty}: M = ${F(l.M * 1e3, 5)} g/mol, ρ = ${F(l.rho, 4)} kg/m³, t = ${F(nm(l.t), 4)} nm → ${F(l.rho * l.t * 1e5, 4)} µg/cm², ${F(l.rho * l.t / l.M * 1e5, 4)} nmol/mm² of formula units`));
+  const stackEq = layers.map(l => eqn('formula', `Layer: ${l.name}`, `${l.pretty}: M = ${F(l.M * 1e3, 5)} g/mol, ρ = ${F(l.rho, 4)} kg/m³, t = ${F(nm(l.t), 4)} nm → ${F(l.rho * l.t * 1e5, 4)} µg/cm², ${F(l.rho * l.t / l.M * 1e5, 4)} nmol/cm² of formula units`));
   const checks = [
     chk('Roughness small against the thinnest layer (continuous layers)', rq < thin / 3, `rms roughness ${F(nm(rq), 3)} nm against thinnest layer ${F(nm(thin), 3)} nm`),
     chk('Top layer closed in the island-growth model', covTop > 0.99, `coverage ${F(covTop * 100, 4)} % at ${F(nm(top.t), 3)} nm; 99 % closure needs ${F(nm(h99), 3)} nm at this island density`),

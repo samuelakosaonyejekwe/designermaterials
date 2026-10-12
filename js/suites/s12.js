@@ -168,7 +168,7 @@ const kkCheck = (name, chi, w, ws, gRel) => (gRel < 3e-4 ? chk(name, true, 'reso
 const fUnit = f => (f >= 3e11 ? [1e12, 'THz'] : f >= 3e8 ? [1e9, 'GHz'] : [1e6, 'MHz']);
 
 // ---------------------------------------------------------------- negative permittivity
-const DRUDE = { Au: { einf: 9.84, wp: 9.01, g: 0.072 }, Ag: { einf: 3.7, wp: 9.2, g: 0.021 }, Al: { einf: 1, wp: 10.83, g: 0.047 }, ITO: { einf: 3.9, wp: 1.9, g: 0.12 } };
+const DRUDE = { Au: { einf: 9.84, wp: 9.01, g: 0.072 }, Ag: { einf: 3.7, wp: 9.2, g: 0.021 }, Al: { einf: 1, wp: 14.75, g: 0.0818 }, ITO: { einf: 3.9, wp: 1.9, g: 0.12 } };
 const EV = 1.602176634e-19 / N.HBAR; // rad/s per eV
 function wireParams(inp) { const a = inp.wire_a * 1e-3, r = Math.min(inp.wire_r * 1e-6, a / 4), wp = Math.sqrt(2 * PI * C0 * C0 / (a * a * Math.log(a / r))); return { a, r, wp, g: EPS0 * a * a * wp * wp / (PI * r * r * inp.metal_sigma) }; }
 function negEps(inp) {
@@ -298,14 +298,26 @@ function nim(inp) {
     return { z, arg: Math.atan2(X.im, X.re), mag: C.abs(X) };
   };
   const rawAt = w => { const q = nz(w), s = slabS(q.n, q.z, w * d / C0); return invert(s.S11, s.S21); }, near = (arg, ref) => arg + 2 * PI * Math.round((ref - arg) / (2 * PI));
-  let evals = 0; const track = (wa, qa, wb, depth) => { // continuous complex log of e^(ink₀d) from wa to wb, bisecting where it turns quickly
-    const r = rawAt(wb), qb = { p: near(r.arg, qa.p), lm: Math.log(pos(r.mag)) }, nEst = Math.abs(qa.p) / (wa * d / C0) + 1;
-    if ((Math.abs(qb.p - qa.p) < 0.5 * PI && Math.abs(qb.lm - qa.lm) < 1 && (wb - wa) * d / C0 * nEst < 0.5) || depth > 40 || evals > 30000) return qb; evals++;
-    const wm = 0.5 * (wa + wb); return track(wm, track(wa, qa, wm, depth + 1), wb, depth + 1);
+  // Continuous complex log of e^(ink₀d). An interval is accepted only if (i) its midpoint and end are each a small step in phase,
+  // attenuation and impedance (z has no branch ambiguity, so it exposes a resonance hidden between two samples) and (ii) the local
+  // phase slope, measured over a micro-step that cannot alias, predicts less than a quarter turn across it; otherwise it is bisected.
+  const zdiff = (a, b) => Math.min(C.abs(C.sub(a, b)), C.abs(C.add(a, b))) / Math.max(C.abs(a), C.abs(b), 1e-300);
+  const stepTo = (qa, r) => ({ p: near(r.arg, qa.p), lm: Math.log(pos(r.mag)), z: r.z }), smooth = (a, b) => Math.abs(b.p - a.p) < 0.25 * PI && Math.abs(b.lm - a.lm) < 1 && zdiff(a.z, b.z) < 0.3;
+  const probe = (w, h) => { const r = rawAt(w), r1 = rawAt(w + h / 1024), dp = r1.arg - r.arg; return { r, seen: r.mag > 1e-280 && r1.mag > 1e-280, adv: 1024 * Math.abs(dp - 2 * PI * Math.round(dp / (2 * PI))) }; };
+  let evals = 0, lost = false, wPrev = 0; const track = (wa, qa, wb, depth) => {
+    const h = wb - wa, wm = wa + 0.5 * h, sa = probe(wa, h), sm = probe(wm, h), sb = probe(wb, h); evals++;
+    if (!(sa.seen && sm.seen && sb.seen)) { lost = true; return stepTo(qa, sb.r); } // opaque: the phase of S21 is no longer resolved
+    const qm = stepTo(qa, sm.r), qb = stepTo(qm, sb.r), stop = depth > 40 || evals > 30000;
+    if ((smooth(qa, qm) && smooth(qm, qb) && Math.max(sa.adv, sm.adv, sb.adv) < 0.5 * PI) || stop) { if (stop) lost = true; return qb; }
+    return track(wm, track(wa, qa, wm, depth + 1), wb, depth + 1);
   };
+  // Branch seed: lower the frequency until the slab is electrically thin (|ln e^(ink₀d)| ≪ 1 at three successive octaves), where the
+  // principal branch is unambiguous, then follow the phase up to the start of the sweep.
+  for (let k = 0, w = ws[0]; k < 80 && prev === null; k++, w /= 4) { const r = [rawAt(w), rawAt(w / 2), rawAt(w / 4)]; if (r.every(q => q.mag > 1e-280 && Math.abs(q.arg) < 0.05 && Math.abs(Math.log(q.mag)) < 0.05)) { prev = { p: r[0].arg, lm: Math.log(r[0].mag), z: r[0].z }; wPrev = w; } }
   ws.forEach((w, i) => {
-    const k0d = w * d / C0, q = invert(Sp[i].S11, Sp[i].S21); if (!(q.mag > 1e-280)) { okRet = false; ret.push({ n: P[i].n, z: q.z }); return; }
-    prev = prev === null ? { p: q.arg, lm: Math.log(q.mag) } : track(ws[i - 1], prev, w, 0);
+    const k0d = w * d / C0, q = invert(Sp[i].S11, Sp[i].S21), seen = q.mag > 1e-280;
+    if (!lost && seen && prev !== null) { prev = track(wPrev, prev, w, 0); wPrev = w; } else lost = true;
+    if (lost || !seen) { okRet = false; ret.push({ n: P[i].n, z: q.z }); return; } // not retrievable: the model value is plotted and excluded from the error
     ret.push({ n: { re: prev.p / k0d, im: -Math.log(q.mag) / k0d }, z: q.z });
   });
   const errN = N.maxOf(ret.map((r, i) => C.abs(C.sub(r.n, P[i].n)))), errZ = N.maxOf(ret.map((r, i) => C.abs(C.sub(r.z, P[i].z)) / (1 + C.abs(P[i].z))));
@@ -313,7 +325,7 @@ function nim(inp) {
   const wpr = inp.f_probe * G9, pp = nz(wpr), sp = slabS(pp.n, pp.z, wpr * d / C0), sn = Math.sin(th) / pp.n.re, refr = Math.abs(sn) <= 1 && Math.abs(pp.n.re) > 1e-9, tht = refr ? Math.asin(sn) * 180 / PI : 0;
   const dw = wpr * 1e-4, ng = pp.n.re + wpr * (nz(wpr + dw).n.re - nz(wpr - dw).n.re) / (2 * dw), rp = ret[N.argmin(ws.map(w => Math.abs(w - wpr)))];
   if (!dng) W.push('No double-negative band: the electric plasma frequency must lie above the magnetic resonance so that ε < 0 where µ < 0.');
-  if (!okRet) W.push('The slab is so opaque at some frequencies that S21 underflows; the retrieval was skipped there.');
+  if (!okRet) W.push('The slab is so opaque (or its phase turns so quickly) at some frequencies that the phase of S21 cannot be followed; the retrieval was skipped there and at all higher frequencies, because the branch of Re n cannot be continued across such a band.');
   if (wpr < wlo || wpr > whi) W.push('The probe frequency lies outside the plotted sweep.');
   if (pp.n.re < 0 && pp.n.im > 0.5 * Math.abs(pp.n.re)) W.push('At the probe frequency the figure of merit is below 2: the wave is absorbed within about one wavelength.');
   return {
@@ -349,7 +361,7 @@ function nim(inp) {
     checks: [
       chk('Passivity: Im ε ≥ 0 and Im µ ≥ 0', P.every(p => p.e.im >= 0 && p.m.im >= 0), 'both constitutive parameters dissipate at every frequency'), chk('Passive branch: Im n ≥ 0 and Re z ≥ 0', P.every(p => p.n.im >= -1e-12 && p.z.re >= -1e-12), 'branch chosen so that waves decay in the propagation direction'),
       chk('Slab is passive: |S11|² + |S21|² ≤ 1', Sp.every(s => C.abs2(s.S11) + C.abs2(s.S21) <= 1 + 1e-9), `max ${f4(N.maxOf(Sp.map(s => C.abs2(s.S11) + C.abs2(s.S21))))}`),
-      chk('Retrieval recovers the model (n, z)', errN < 1e-6 && errZ < 1e-6, `max |Δn| = ${f3(errN)}, relative |Δz| = ${f3(errZ)}; retrieved at probe: ε = ${f3(C.div(rp.n, rp.z).re)}, µ = ${f3(C.mul(rp.n, rp.z).re)}`),
+      chk('Retrieval recovers the model (n, z)', errN < 1e-6 && errZ < 1e-6, `max |Δn| = ${f3(errN)}, relative |Δz| = ${f3(errZ)}; retrieved at probe: ε = ${f3(C.div(rp.n, rp.z).re)}, µ = ${f3(C.mul(rp.n, rp.z).re)}${okRet ? '' : '; frequencies where the phase of S21 could not be followed are excluded'}`),
       kkCheck('Causality (Kramers–Kronig) of µ − µ(∞)', w => C.sub(mu(w), C.of(1 - Fm)), wpr, w0, gm / w0), kkCheck('Causality (Kramers–Kronig) of ε − 1', w => C.sub(eps(w), ONE), wpr, wep, ge / wep),
       chk('Group velocity positive (energy flows forward)', ng > 0, `n_g = ${f3(ng)} while the phase index is ${f3(pp.n.re)}`),
     ],

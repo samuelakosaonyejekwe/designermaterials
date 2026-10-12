@@ -133,19 +133,24 @@ function memberForces(sol, e) {   // axial force and largest end moment of every
   });
 }
 function invSym(C) { const n = C.length, sc = max(...C.map((r, i) => abs(r[i]))) || 1, A = C.map((r, i) => r.map((x, j) => x / sc + (i === j ? 1e-12 : 0))); try { return N.inverse(A).map(r => r.map(x => x / sc)); } catch { return C.map((r, i) => r.map((x, j) => (i === j ? 1 / (x || sc) : 0))); } }
-function unionFraction(red, t) {   // solid fraction with node overlap counted once: grid sampling of the union of struts
+function unionFraction(red, t) {   // solid fraction with node overlap counted once: quasi-random sampling of the union of struts
   const { reps, els, per, dim } = red, r = t / 2, r2 = r * r, segs = [], sh = dim === 3 ? [-1, 0, 1] : [0];
   for (const e of els) for (const i of [-1, 0, 1]) for (const j of [-1, 0, 1]) for (const k of sh) {
     const p = [reps[e.a][0] + i * per[0], reps[e.a][1] + j * per[1], reps[e.a][2] + k * per[2]]; let keep = true;
     for (let m = 0; m < dim; m++) if (max(p[m], p[m] + e.d[m]) < -r || min(p[m], p[m] + e.d[m]) > per[m] + r) keep = false;
     if (keep) segs.push([p[0], p[1], p[2], e.d[0], e.d[1], e.d[2], e.L * e.L]);
   }
-  const n = dim === 3 ? 22 : 96, nz = dim === 3 ? n : 1; let inside = 0;
-  for (let kz = 0; kz < nz; kz++) for (let jy = 0; jy < n; jy++) for (let ix = 0; ix < n; ix++) {
-    const x = (ix + 0.5) / n * per[0], y = (jy + 0.5) / n * per[1], z = dim === 3 ? (kz + 0.5) / n * per[2] : 0;
-    for (const s of segs) { const ax = x - s[0], ay = y - s[1], az = z - s[2], u = min(1, max(0, (ax * s[3] + ay * s[4] + az * s[5]) / s[6])), bx = ax - u * s[3], by = ay - u * s[4], bz = az - u * s[5]; if (bx * bx + by * by + bz * bz <= r2) { inside++; break; } }
+  // Kronecker (additive-recurrence) sequence: a regular grid aliases with axis-aligned struts and biases the area of thin members
+  const n = dim === 3 ? 90000 : 120000, g = dim === 3 ? 1.2207440846057596 : 1.324717957244746, a1 = 1 / g, a2 = a1 / g, a3 = a2 / g; let inside = 0;
+  // bin the segments (bounding box widened by r) on a coarse grid of the cell so that each sample point tests only nearby struts
+  const G = dim === 3 ? 8 : 16, Gz = dim === 3 ? G : 1, bins = Array.from({ length: G * G * Gz }, () => []), bi = (v, m, g) => min(g - 1, max(0, floor(v / per[m] * g)));
+  for (const s of segs) { const lo = [0, 1, 2].map(m => min(s[m], s[m] + s[3 + m]) - r), hi = [0, 1, 2].map(m => max(s[m], s[m] + s[3 + m]) + r);
+    for (let kz = dim === 3 ? bi(lo[2], 2, Gz) : 0; kz <= (dim === 3 ? bi(hi[2], 2, Gz) : 0); kz++) for (let jy = bi(lo[1], 1, G); jy <= bi(hi[1], 1, G); jy++) for (let ix = bi(lo[0], 0, G); ix <= bi(hi[0], 0, G); ix++) bins[ix + G * (jy + G * kz)].push(s); }
+  for (let q = 1; q <= n; q++) {
+    const x = (0.5 + q * a1) % 1 * per[0], y = (0.5 + q * a2) % 1 * per[1], z = dim === 3 ? (0.5 + q * a3) % 1 * per[2] : 0;
+    for (const s of bins[bi(x, 0, G) + G * (bi(y, 1, G) + G * (dim === 3 ? bi(z, 2, Gz) : 0))]) { const ax = x - s[0], ay = y - s[1], az = z - s[2], u = min(1, max(0, (ax * s[3] + ay * s[4] + az * s[5]) / s[6])), bx = ax - u * s[3], by = ay - u * s[4], bz = az - u * s[5]; if (bx * bx + by * by + bz * bz <= r2) { inside++; break; } }
   }
-  return inside / (n * n * nz);
+  return inside / n;
 }
 // Effective properties of one cell. Primary load axis: x for 2-D cells, z for 3-D cells.
 function cellModel(type, prm, a, tIn, m, light = false) {
@@ -295,7 +300,7 @@ function runLattice(v) {
   const warnings = [], m = { Es: v.Es, nus: v.nus }, type = v.cellType, def = cellDef(type), dim = def.dim, prm = cellParams(type, v.theta, v.hl), a = v.cell;
   const c = cellModel(type, prm, a, v.strut, m), t = c.t, ref = reference(c, m), ax = dim === 3 ? 'z' : 'x', ay = dim === 3 ? 'x' : 'y';
   if (c.capped) warnings.push(`The strut size was limited to ${len(t)} (45 % of the shortest strut, ${len(c.Lmin)}); thicker members are not beams and the frame model does not apply.`);
-  const rhoU = c.rho1 >= 0.03 ? (() => { const r = { ...c.red }; return unionFraction(r, t); })() : c.rho1, rho = min(c.rho1, max(rhoU, 0.5 * c.rho1));
+  const rhoU = c.rho1 >= 0.03 ? unionFraction(c.red, t) : null, rho = rhoU === null ? c.rho1 : min(c.rho1, max(rhoU, 0.5 * c.rho1));   // below 3 % the overlap is within the sampling error
   const lg = latticeGeometry(type, prm, a, t, v.nView), geo = lg.geo; if (lg.note) warnings.push(lg.note + '.');
   const Mblock = geo.edges.length - dim * geo.nodes.length + (dim === 3 ? 6 : 3), Mcell = c.b - dim * c.j, slender = t / c.Lmin;
   // strength
@@ -343,7 +348,7 @@ function runLattice(v) {
   const dom = c.stretch > 0.5 ? 'stretch-dominated' : 'bending-dominated', pretty = optLabel('cellType', type);
   const hexLine = ref && ref.nuF !== undefined && ref.nuF !== null ? ` The thin-wall Gibson–Ashby flexure value is ν₁₂ = ${F(ref.nuF, 4)} for θ = ${F(deg(ref.th), 3)}°, h/l = ${F(ref.hl, 3)}.` : '';
   const kpis = [
-    kpi('rho', 'Relative density', rho, '–', `Solid fraction of the cell = ${F(rho, 4)}. The first-order strut sum ΣA·L/V gives ${F(c.rho1, 4)}; ${c.rho1 >= 0.03 ? `counting node overlaps once (grid-sampled union of the struts) gives ${F(rhoU, 4)}` : 'node overlap is negligible at this slenderness'}.${ref && ref.rho ? ` Closed form: ${F(ref.rho, 4)}.` : ''}`),
+    kpi('rho', 'Relative density', rho, '–', `Solid fraction of the cell = ${F(rho, 4)}. The first-order strut sum ΣA·L/V gives ${F(c.rho1, 4)}; ${rhoU !== null ? `counting node overlaps once (quasi-random sampling of the union of the struts, about 1 % sampling error) gives ${F(rhoU, 4)}` : 'node overlap is negligible at this slenderness'}.${ref && ref.rho ? ` Closed form: ${F(ref.rho, 4)}.` : ''}`),
     kpi('Z', 'Nodal connectivity Z', c.Z, '–', `Average number of struts meeting at a node of the periodic cell (${c.b} struts, ${c.j} nodes) = ${F(c.Z, 3)}. Rigidity of similarly situated pin-jointed nodes needs Z ≥ ${dim === 3 ? 12 : 6} (${dim === 3 ? '3-D' : '2-D'}).`),
     kpi('maxwell', 'Maxwell number', Mblock, '–', `M = b − ${dim}j + ${dim === 3 ? 6 : 3} = ${Mblock} for the displayed ${lg.n}-cell block (per periodic cell b − ${dim}j = ${Mcell}). M < 0 means mechanisms when pin-jointed, so stiffness must come from strut bending; M ≥ 0 is necessary but not sufficient for stretch domination.`, Mblock >= 0),
     kpi('stretch', 'Axial (stretch) share of stiffness', c.stretch, '–', `Modulus of the same cell with strut bending and torsion removed, divided by the full value = ${F(c.stretch, 3)}: the cell is ${dom} along ${ax}. The fitted scaling exponent E ∝ ρ̄ⁿ is n = ${F(nexp, 3)}.`, c.stretch > 0.5),
@@ -393,7 +398,7 @@ function runLattice(v) {
     ],
     publish: { 'geom.cell_size': a, 'geom.strut': t, 'geom.rel_density': rho, 'eff.E': c.E, 'eff.nu': c.nu, 'eff.G': c.G, 'eff.K': c.K, 'eff.density': rho * v.rhos, 'eff.yield': strength, 'eff.anisotropy': anis, 'geom.connectivity': c.Z },
     exports: latticeExports(geo, cellDescriptor(c, { relative_density: rho, E_primary_Pa: c.E, E_secondary_Pa: c.Eo, nu_primary: c.nu, nu_conjugate: c.nuo, G_Pa: c.G, primary_axis: ax })),
-    numerics: { method: 'Periodic Timoshenko beam-frame homogenisation (direct stiffness method, static condensation of the fluctuation field); grid-sampled union volume for node overlap', dof: c.sol.dof, steps: sw.length + (ang ? ang.ths.length : 0) + 4, iterations: 1, residual: recip, notes: `${c.j} periodic nodes and ${c.b} struts per cell. Linear, small-strain response; nodes are rigid joints of zero size.` },
+    numerics: { method: 'Periodic Timoshenko beam-frame homogenisation (direct stiffness method, static condensation of the fluctuation field); quasi-random sampled union volume for node overlap', dof: c.sol.dof, steps: sw.length + (ang ? ang.ths.length : 0) + 4, iterations: 1, residual: recip, notes: `${c.j} periodic nodes and ${c.b} struts per cell. Linear, small-strain response; nodes are rigid joints of zero size.` },
   };
 }
 
@@ -411,7 +416,7 @@ function hashinShtrikman(rho, Es, nus) {   // upper bounds for a porous isotropi
   return { K, G, E: 9 * K * G / (3 * K + G), nu: (3 * K - 2 * G) / (2 * (3 * K + G)) };
 }
 function runTPMS(v) {
-  const warnings = [], a = v.cell, sheet = v.tpmsMode === 'sheet', graded = abs(v.rdTo - v.rd) > 1e-6, res = 18, [u, s] = unitOf(a);
+  const warnings = [], a = v.cell, sheet = v.tpmsMode === 'sheet', graded = abs(v.rdTo - v.rd) > 1e-6, res = 24, [u, s] = unitOf(a);
   const g = implicit.tpmsVoxels({ type: v.tpmsType, cells: [2, 2, graded ? 3 : 2], resolution: res, relDensity: v.rd, mode: v.tpmsMode, grading: graded ? { axis: 'z', from: v.rd, to: v.rdTo } : undefined, cellSize_mm: a * s });
   const uni = graded ? implicit.tpmsVoxels({ type: v.tpmsType, cells: [2, 2, 2], resolution: res, relDensity: v.rd, mode: v.tpmsMode }) : g;
   const h = a / uni.resolution, st = voxSurface(uni), nTot = uni.nx * uni.ny * uni.nz, rho = uni.relDensity, Sv = st.faces * h * h * 2 / 3 / (nTot * h ** 3);   // 1/m
@@ -597,7 +602,7 @@ function resAcoustic(v, warnings) {
   }
   if (type === 'massinmass') {
     const m1 = v.mimM1, m2 = v.mimM2, k1 = v.mimK1, k2 = v.mimK2, f2 = sqrt(k2 / m2) / (2 * PI), fhi = f2 * sqrt(1 + m2 / m1), eta = 0.02;
-    const meff = f => { const q = cdiv([m2 * f2 * f2, 0], [f2 * f2 - f * f, eta * f2 * f2]); return [m1 + q[0], q[1]]; };
+    const meff = f => { const q = cdiv([m2 * f2 * f2, 0], [f2 * f2 - f * f, -eta * f2 * f2]); return [m1 + q[0], q[1]]; };   // internal spring k₂(1 − iη) in the e^(−iωt) convention ⇒ Im m_eff ≥ 0
     const branch = K => { const w2 = (2 * PI * f2) ** 2, b = (m1 + m2) * w2 + K, d = sqrt(max(0, b * b - 4 * m1 * K * w2)); return [sqrt(max(0, (b - d) / (2 * m1))) / (2 * PI), sqrt((b + d) / (2 * m1)) / (2 * PI)]; };
     const qs = N.linspace(0, 1, 60), br = qs.map(q => branch(2 * k1 * (1 - cos(PI * q)))), flo = br[br.length - 1][0], fs = N.linspace(0.3 * f2, 1.6 * fhi, 320), ME = fs.map(meff), band = negBand(fs, ME.map(z => z[0]));
     const fe = sqrt(f2 * fhi), me = meff(fe), rhoS = (m1 + m2) / a ** 3, cL = a * sqrt(k1 / (m1 + m2)), aLam = a * flo / cL;
@@ -1041,9 +1046,9 @@ function runGraded(v) {
   for (let w = 1; w <= v.nAcross; w++) { const red = reduceCell(base.uc, dim, a, w); if (red.reps.length * (dim === 3 ? 6 : 3) > 430) break; const sol = frameSolve(red, sec, dim === 3 ? [0, 2] : [0]), S = invSym(sol.C); widths.push(w); Efin.push(fin(1 / S[0][0] / Einf, 0)); }
   if (widths.length < v.nAcross) warnings.push(`The finite-width study stopped at ${widths.length} cells across to keep the frame model small.`);
   const edgeLast = Efin[Efin.length - 1], n95 = widths.find((w, i) => abs(Efin[i] - 1) < 0.05) ?? null;
-  // periodic-boundary compatibility of a 2-cell supercell, from the generated geometry
+  // periodic-boundary compatibility of a 2-cell supercell, from the generated geometry (faces one block period apart: re-entrant cells protrude beyond the period, so the bounding box is not the periodic face)
   const sup = latticeGeometry(type, cellParams(type, v.theta, v.hl), a, t0, 2), G = sup.geo, compat = [];
-  for (let axn = 0; axn < dim; axn++) { const lo = N.minOf(G.nodes.map(p => p[axn])), hi = N.maxOf(G.nodes.map(p => p[axn])), ext = hi - lo, tolr = 1e-4 * ext, keyOf = p => p.map((x, k) => (k === axn ? 0 : round(x / tolr / 10))).join(), A = new Set(G.nodes.filter(p => abs(p[axn] - lo) < tolr).map(keyOf)), B = G.nodes.filter(p => abs(p[axn] - hi) < tolr).map(keyOf); const matched = B.filter(k => A.has(k)).length; compat.push(['xyz'[axn], A.size, B.length, matched, A.size === B.length && matched === A.size ? 'compatible' : 'mismatch']); }
+  for (let axn = 0; axn < dim; axn++) { const lo = N.minOf(G.nodes.map(p => p[axn])), hi = lo + sup.n * base.red.per[axn] * sup.scale, ext = hi - lo, tolr = 1e-4 * ext, keyOf = p => p.map((x, k) => (k === axn ? 0 : round(x / tolr / 10))).join(), A = new Set(G.nodes.filter(p => abs(p[axn] - lo) < tolr).map(keyOf)), B = G.nodes.filter(p => abs(p[axn] - hi) < tolr).map(keyOf); const matched = B.filter(k => A.has(k)).length; compat.push(['xyz'[axn], A.size, B.length, matched, A.size === B.length && matched === A.size ? 'compatible' : 'mismatch']); }
   const compatOK = compat.every(r => r[4] === 'compatible');
   // geometry: graded lattice along x
   const [u, s] = unitOf(a), nx = min(n, 8), gl = OWN[type] ? tessellate(def.make(cellParams(type, v.theta, v.hl)), dim, 3, a, t0, s) : implicit.buildLattice({ type, cells: [nx, 2, dim === 3 ? 2 : 1], cellSize_mm: a * s, strut_mm: t0 * s, params: cellParams(type, v.theta, v.hl), grading: byAngle ? undefined : { axis: 'x', from: 1, to: v.gradRatio } });

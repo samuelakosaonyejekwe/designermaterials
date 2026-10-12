@@ -43,8 +43,15 @@ const FAM = {
   firstorder: { label: 'First-order kinetics  y = y∞·(1 − exp(−k·x))', names: ['y∞', 'k'], eq: 'dy/dt = k·(y∞ − y)  ⇒  y = y∞·(1 − exp(−k·t))', f: (x, p) => p[0] * (1 - ex(-p[1] * x)), b: [[-1e30, 1e30], [0, 1e30]],
     guess: (x, y) => [1.1 * (N.maxOf(y) || 1), 2 / Math.max(N.maxOf(x.map(Math.abs)), 1e-12)] },
 };
-// Student-t 97.5 % quantile (Cornish–Fisher expansion in 1/ν)
-function t975(nu) { const z = 1.959964, v = Math.max(1, nu), z3 = z ** 3, z5 = z ** 5, z7 = z ** 7, z9 = z ** 9; return z + (z3 + z) / (4 * v) + (5 * z5 + 16 * z3 + 3 * z) / (96 * v * v) + (3 * z7 + 19 * z5 + 17 * z3 - 15 * z) / (384 * v ** 3) + (79 * z9 + 776 * z7 + 1482 * z5 - 1920 * z3 - 945 * z) / (92160 * v ** 4); }
+// Student-t 97.5 % quantile: Simpson quadrature of the density (substitution x = √ν·tan θ) inverted by a bracketed root search;
+// the Cornish–Fisher expansion in 1/ν is kept for ν > 200, where it is accurate to better than 10⁻⁸
+function t975(nu) {
+  const v = Math.max(1, nu), z = 1.959964, z3 = z ** 3, z5 = z ** 5, z7 = z ** 7;
+  if (v > 200) return z + (z3 + z) / (4 * v) + (5 * z5 + 16 * z3 + 3 * z) / (96 * v * v) + (3 * z7 + 19 * z5 + 17 * z3 - 15 * z) / (384 * v ** 3);
+  const c = Math.exp(N.gammaLn((v + 1) / 2) - N.gammaLn(v / 2)) / Math.sqrt(Math.PI);
+  const area = t => { const b = Math.atan(t / Math.sqrt(v)), n = 200, h = b / n; let s = 1 + Math.pow(Math.cos(b), v - 1); for (let i = 1; i < n; i++) s += (i % 2 ? 4 : 2) * Math.pow(Math.cos(i * h), v - 1); return c * s * h / 3; };
+  return N.brent(t => area(t) - 0.475, 1.9, 13, 1e-10);
+}
 
 function calibrate(X, Y, S, fam, scaleCov, fixed) {
   const m = X.length, g0 = fam.guess(X, Y).map((v, j) => N.clamp(Number.isFinite(v) ? v : 1, fam.b[j][0], fam.b[j][1]));
@@ -652,7 +659,7 @@ export default {
   inputs,
   presets: [
     { name: 'ZnO nanorod growth rate: Arrhenius calibration', note: 'Axial growth rate of hydrothermal ZnO nanorods versus temperature (60–95 °C): shows the classic ln A–Eₐ correlation over a narrow temperature window.', values: { mode: 'calib', cmodel: 'arrhenius', cdata: CAL_DEF, rxn: 'Zn(NO3)2 + NaOH -> ZnO + NaNO3 + H2O' } },
-    { name: 'Au nanoparticle colloid: DLVO barrier uncertainty', note: 'Propagates uncertainty of Hamaker constant, surface potential, radius and ionic strength of a 50 nm gold colloid to the aggregation barrier.', values: { mode: 'uq', umodel: 'dlvo', dist: 'lognormal', limRatio: 0.5, limSide: 'below', nSamp: 2000 } },
+    { name: 'Au nanoparticle colloid: DLVO barrier uncertainty', note: 'Propagates uncertainty of Hamaker constant (2.5×10⁻¹⁹ J, typical of gold across water), surface potential, radius and ionic strength of a 50 nm gold colloid to the aggregation barrier.', values: { mode: 'uq', umodel: 'dlvo', uqOverride: 'A_H=2.5e-19,20', dist: 'lognormal', limRatio: 0.5, limSide: 'below', nSamp: 2000 } },
     { name: 'Auxetic lattice FE model: three-mesh GCI', note: 'Effective modulus (MPa) of a re-entrant auxetic lattice from three beam-element meshes with refinement ratio 2; checks mesh independence before homogenisation.', values: { mode: 'gci', gh1: 0.25, gh2: 0.5, gh3: 1, gf1: 41.82, gf2: 42.31, gf3: 44.05, gOrder: 2, gTol: 2 } },
     { name: 'Metasurface split-ring resonance: tolerance analysis', note: 'Fabrication tolerances of a printed split-ring resonator propagated to its resonance frequency with Sobol ranking of the dimensions.', values: { mode: 'uq', umodel: 'srr', dist: 'normal', limRatio: 1.03, limSide: 'above', nSamp: 3000 } },
     { name: 'TiO₂ anatase crystallisation: JMAK calibration', note: 'Transformed fraction versus annealing time fitted with the JMAK law; rate constant and Avrami exponent with Bayesian credible intervals.', values: { mode: 'calib', cmodel: 'jmak', cdata: JMAK_DEF, rxn: 'Ti(OH)4 -> TiO2 + H2O' } },

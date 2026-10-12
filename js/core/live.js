@@ -3,7 +3,7 @@
 // last known data stays available offline and is refreshed whenever a connection exists.
 import { kv, prefs } from './store.js';
 
-const J = async (url, opt = {}) => { const c = new AbortController(), t = setTimeout(() => c.abort(), opt.timeout || 15000); try { const r = await fetch(url, { signal: c.signal, headers: opt.headers || { Accept: 'application/json' } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return opt.text ? r.text() : r.json(); } finally { clearTimeout(t); } };
+const J = async (url, opt = {}) => { const c = new AbortController(), t = setTimeout(() => c.abort(), opt.timeout || 15000); try { const r = await fetch(url, { signal: c.signal, keepalive: true, headers: opt.headers || { Accept: 'application/json' } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return opt.text ? r.text() : r.json(); } finally { clearTimeout(t); } };
 const enc = encodeURIComponent, yearsAgo = n => `${new Date().getFullYear() - n}-01-01`;
 const dbn = code => async () => { const d = await J(`https://api.db.nomics.world/v22/series/IMF/PCPS/M.W00.${code}.USD?observations=1`), s = d.series.docs[0]; let i = s.value.length - 1; while (i > 0 && typeof s.value[i] !== 'number') i--; return { value: s.value[i], period: s.period[i], history: { x: s.period.slice(-60), y: s.value.slice(-60) } }; };
 
@@ -97,7 +97,11 @@ export const age = at => { const s = (Date.now() - at) / 1000; return s < 90 ? '
 // Keep data fresh while the app is open and whenever connectivity returns.
 export function startAutoRefresh(onUpdate) {
   const go = async () => { if (!online()) return; if (Date.now() - prefs.get('lastFeedRefresh', 0) > 30 * 60e3) { await refreshFeeds(); onUpdate && onUpdate(); } };
-  go(); setInterval(go, 10 * 60e3); addEventListener('online', go); document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && go());
+  go(); setInterval(go, 10 * 60e3); addEventListener('online', go);
+  // Refresh when the app comes to the foreground, and once more as it is sent to the background (requests are kept alive),
+  // so the stored copy is as recent as the last moment the app was in use on platforms that suspend closed web apps.
+  const leave = () => { if (online() && Date.now() - prefs.get('lastFeedRefresh', 0) > 5 * 60e3) refreshFeeds(true).then(() => onUpdate && onUpdate()).catch(() => { }); };
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' ? go() : leave()); addEventListener('pagehide', leave);
 }
 // Search phrases per suite for "current practice" literature look-ups
 export const SUITE_TOPICS = { 1: 'materials selection multi-objective design requirements', 2: 'composition design dopant phase stability', 3: 'crystal structure defects first-principles', 4: 'nanoparticle morphology control shape', 5: 'metamaterial unit cell design lattice', 6: 'solubility speciation thermodynamics precipitation', 7: 'nucleation growth kinetics nanocrystal', 8: 'colloidal stability surface functionalization', 9: 'porous media reactor flow mixing nanoparticle synthesis', 10: 'thermal transport nanoscale heat transfer', 11: 'electrodeposition charge transport nanostructure', 12: 'metasurface plasmonic optical response', 13: 'magnetic nanoparticles spintronic', 14: 'mechanical metamaterial auxetic nanomechanics', 15: 'acoustic metamaterial phononic bandgap', 16: 'phase-field microstructure grain growth', 17: 'molecular dynamics machine-learning interatomic potential', 18: 'homogenization multiscale effective properties', 19: 'architected material component large-scale analysis', 20: 'tunable reconfigurable metamaterial control', 21: 'synthesis process optimization scalable fabrication', 22: 'degradation fatigue lifetime reliability', 23: 'characterization metrology measurement uncertainty', 24: 'verification validation uncertainty quantification simulation', 25: 'inverse design machine learning topology optimization', 26: 'scale-up continuous manufacturing quality control', 27: 'nanomaterial safety exposure risk assessment', 28: 'techno-economic life cycle assessment sustainability', 29: 'reverse engineering reconstruction tomography inverse problem' };

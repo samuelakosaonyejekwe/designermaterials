@@ -1,11 +1,14 @@
 // Geometry import/export hub: format registry, signature-based recognition, parsing, validation, conservative
-// repair, suitability assessment, representation conversion and export. Everything is local and synchronous;
-// procedural files are parsed, never executed.
+// repair, suitability assessment, representation conversion and export. Everything is local; procedural files are
+// parsed, never executed. Exact B-rep formats (STEP, IGES, BREP, FreeCAD), Rhino 3DM and IFC are tessellated by the
+// on-demand WebAssembly kernels in kernels.js, with the built-in lightweight readers as the fallback.
 import * as A from './atomic.js';
 import * as F from './formats.js';
 import { tpmsVoxels, buildLattice, porousMedium, marchingCubes, latticeToMesh, voxelStats } from './implicit.js';
 import { meshStats, repairMesh, bboxOf, triangulate, extrude, mergeMeshes, rodsToMesh, nanorodArray, reactor } from './mesh.js';
 import { layoutStats, polyArea, resonator, array as layoutArray } from './layout.js';
+import * as K from './kernels.js';
+import * as N from './native.js';
 
 const { min, max, abs, floor, round, hypot, PI } = Math;
 const latin = (b, o, n) => { let s = ''; for (let i = o, e = min(b.length, o + n); i < e; i++) s += String.fromCharCode(b[i]); return s; };
@@ -25,31 +28,32 @@ const X = {
 };
 // id | name | extensions and special file names | doc sections | representation | priority | support | note | aliases (;) | advice key
 const TABLE = `
-step|STEP / ISO 10303|.step .stp|1,7,8,9,10,11,13,15,16,17|cad|P1|partial|Header, products, units and entity inventory; faceted B-rep, AP242 tessellation and planar straight-edged faces become a mesh; curved/trimmed faces are counted and shown as a wireframe only.|STEP;STEP assemblies;NURBS geometry|cad
-iges|IGES|.iges .igs|1,7,8,10,11,13|cad|P1|partial|Global section (units, author), entity inventory and wireframe (points, lines, arcs, polylines); NURBS/trimmed surfaces are not tessellated.||cad
-parasolid|Parasolid|.x_t .x_b .xmt_txt .xmt_bin|1,8|cad|P1|inventory|Recognised by header; schema and key header fields listed. The proprietary B-rep is not evaluated.||cad
-sat|ACIS SAT|.sat|1|cad|P1|inventory|Header (version, product, date, units scale) and entity-type counts; B-rep not evaluated.|SAT|cad
+step|STEP / ISO 10303|.step .stp .p21 .stpz|1,7,8,9,10,11,13,15,16,17|cad|P1|full|With the on-demand OpenCASCADE kernel (vendor/occt-import-js, about 7.7 MB, fetched on first use): every B-rep face (planar, analytic, swept, trimmed NURBS) of every solid, shell and assembly instance is tessellated to a triangle mesh in millimetres with body names and colours, at a linear deflection of 0.001 × the mean bounding-box edge and an angular deflection of 0.5 rad unless set otherwise. The result is a tessellation of the exact B-rep: the surface definitions themselves, PMI and the assembly tree are not retained. Gzip- or zip-wrapped files (.stpZ, .stp.gz) are unpacked first. Without the kernel (offline before it has been cached) the built-in reader gives header, products, units and entity inventory, meshes faceted B-rep, AP242 tessellation and planar straight-edged faces, and shows curved faces as a wireframe only.|STEP;STEP assemblies;NURBS geometry|cad
+iges|IGES|.iges .igs|1,7,8,10,11,13|cad|P1|full|With the on-demand OpenCASCADE kernel (vendor/occt-import-js, about 7.7 MB, fetched on first use): trimmed and untrimmed surfaces (types 108, 114, 118, 120, 122, 128, 143, 144 …) and manifold solids (186) are tessellated to a triangle mesh in millimetres at the stated deflection; surface models whose faces do not share edges come through as open (unsewn) shells and are reported as such. The exact surfaces are not retained. Without the kernel the built-in reader gives the global section (units, author), the entity inventory and a wireframe of points, lines, arcs and polylines.||cad
+brep|OpenCASCADE BREP|.brep .brp|1,2|cad|P2|full|OpenCASCADE's native shape text format, tessellated by the on-demand OpenCASCADE kernel (vendor/occt-import-js, about 7.7 MB, fetched on first use) exactly as STEP is (all faces, at the stated deflection; the exact surfaces are not retained). A BREP file declares no length unit and carries no names or colours. Without the kernel: section inventory only.|BREP;BRP|cad
+parasolid|Parasolid|.x_t .x_b .xmt_txt .xmt_bin|1,8|cad|P1|inventory|Transmit header read in full (schema, modeller version, application, date, key, format). The node records are not decoded — no open kernel reads Parasolid — so neither an entity inventory nor a bounding box is given.||cad
+sat|ACIS SAT|.sat|1|cad|P1|partial|Header (version, product, date, units scale), entity inventory, and the topological vertex points with edges drawn as straight chords (a wireframe preview with a vertex bounding box, scaled to millimetres). Surfaces and curves are not evaluated: no faces are tessellated and body transforms are not applied.|SAT|cad
 sab|ACIS SAB|.sab|1|cad|P2|inventory|Recognised by the binary ACIS signature; not decoded.||cad
-jt|JT|.jt|1|cad|P2|inventory|Version string from the header; compressed LOD/B-rep segments not decoded.||cad
+jt|JT|.jt|1|cad|P2|inventory|Header and table of contents: version, byte order and the count and size of every segment type (scene graph, shape LODs, JT / XT B-rep, PMI, meta data). The entropy-coded tessellation and B-rep segments are not decoded.||cad
 dxf|DXF|.dxf|1,2,8,9,10,11,15|layout|P1|partial|ASCII DXF: LINE, LWPOLYLINE/POLYLINE (bulges), CIRCLE, ARC, ELLIPSE, SOLID, 3DFACE; blocks, splines, hatches and text are counted, not converted.|AutoCAD|cad
 dwg|DWG|.dwg|1,2|cad|P3|inventory|Release identified from the AC10xx signature; the proprietary object database is not decoded.|BricsCAD|Save as DXF (ASCII) for 2-D geometry, or export STEP for solids.
-ifc|IFC|.ifc|1|cad|P3|inventory|STEP-encoded: header and counts of building elements; geometry (swept solids, B-rep, CSG) not evaluated.||Export the equipment or structure of interest as STEP, or as a tessellated glTF / OBJ / STL.
-3dm|Rhino 3DM|.3dm|1,2,13|cad|P2|inventory|Recognised by header; archive version read. NURBS objects not decoded.|Rhino;3DM|cad
+ifc|IFC|.ifc|1|cad|P3|partial|With the on-demand web-ifc kernel (vendor/web-ifc, about 7.5 MB): the body geometry of every building element (swept and extruded solids, B-reps, Boolean clippings and openings, mapped items) is tessellated in metres, one body per element with its IFC class, name and colour; curved profiles use a fixed number of segments per circle. Property sets, materials, the spatial structure and relationships are not imported, and representation types the kernel does not evaluate are simply absent. Without the kernel: header and counts of building elements only.||Export the equipment or structure of interest as STEP, or as a tessellated glTF / OBJ / STL.
+3dm|Rhino 3DM|.3dm|1,2,13|cad|P2|partial|With the on-demand openNURBS kernel (vendor/rhino3dm, about 2.8 MB): mesh objects in full; Breps and extrusions through the render meshes Rhino saved in the file; untrimmed NURBS surfaces by sampling; SubD as its control net; block instances placed (one level); units, layers, names and colours kept. openNURBS has no surface mesher, so trimmed Breps saved without render meshes are counted but not tessellated. Without the kernel: archive version only.|Rhino;3DM|Save from Rhino with render meshes (shaded view, not "Save small"), or export STEP, to bring trimmed NURBS solids through.
 dae|COLLADA|.dae|1|scene|P3|inventory|XML scene recognised; geometry libraries counted.||scene
 gltf|glTF|.gltf .glb|1|scene|P2|partial|Triangle primitives with node transforms from GLB or embedded buffers; external buffers, materials, animation not imported.||scene
 usd|USD|.usd .usda .usdc .usdz|1|scene|P2|inventory|Text / crate / package variant identified; prim types counted for .usda.||scene
 vrml|VRML|.wrl .vrml|1|scene|P3|partial|IndexedFaceSet geometry only; Transform nodes are not applied.||scene
 x3d|X3D|.x3d .x3db|1|scene|P3|partial|XML IndexedFaceSet geometry only; binary .x3db and Transform nodes not handled.||scene
-solidworks|SOLIDWORKS|.sldprt .sldasm|2|cad|P2|inventory|Container recognised (OLE2 or newer packaging); feature tree and Parasolid body not accessible without the vendor kernel.|SLDPRT;SLDASM|cad
+solidworks|SOLIDWORKS|.sldprt .sldasm .slddrw|2|cad|P2|partial|Both the OLE2 layout (2014 and earlier) and the 2015+ compressed-stream container are opened: preview image, document and custom properties, release, configuration names, feature names and the stream inventory are recovered, and the embedded Parasolid body of each part configuration is unpacked intact (offered for saving). No geometry is shown: no open kernel evaluates Parasolid, and the stored display lists are not decoded.|SLDPRT;SLDASM|cad
 catia|CATIA V5|.catpart .catproduct .catdrawing|2|cad|P2|inventory|V5 container signature recognised; not decoded.|CATPart|cad
 nx|Siemens NX|.prt|2|cad|P2|inventory|Assumed from the extension when the Creo signature is absent; not decoded.|NX PRT|cad
 creo|PTC Creo|.prt .asm|2|cad|P3|inventory|Recognised by the #UGC header; release line read. Not decoded.||cad
-inventor|Autodesk Inventor|.ipt .iam|2|cad|P2|inventory|OLE2 container recognised; not decoded.|Inventor IPT|cad
-fusion|Autodesk Fusion|.f3d .f3z|2|cad|P3|inventory|Zip archive listing only.||cad
-solidedge|Solid Edge|.par .psm .asm|2|cad|P3|inventory|OLE2 container recognised; not decoded.||cad
-fcstd|FreeCAD|.fcstd|2|cad|P3|inventory|Zip archive: object names and types from Document.xml; the BREP shapes are OpenCASCADE-native and not evaluated.||cad
+inventor|Autodesk Inventor|.ipt .iam|2|cad|P2|partial|OLE2 container opened: thumbnail, summary and design-tracking properties (part number, material, designer, dates, saving release) and the segment inventory are recovered. The model segments (ShapeManager B-rep, graphics) are in Inventor's proprietary encoding and are not decoded: no geometry.|Inventor IPT|cad
+fusion|Autodesk Fusion|.f3d .f3z|2|cad|P3|inventory|Zip archive: entry listing, preview image when one is stored, nested component archives and the location and size of the ShapeManager B-rep segments (.smb / .smbh). Those segments are an ACIS derivative that no open kernel reads: no geometry.||cad
+solidedge|Solid Edge|.par .psm .asm|2|cad|P3|inventory|OLE2 container opened: property sets, thumbnail when present and the stream inventory. The Parasolid-based model streams are not decoded.||cad
+fcstd|FreeCAD|.fcstd|2|cad|P3|partial|Zip archive: document properties, object list and thumbnail from Document.xml; with the on-demand OpenCASCADE kernel (vendor/occt-import-js, about 7.7 MB, fetched on first use) the OpenCASCADE BREP shape of every visible object is tessellated in millimetres (hidden Boolean inputs and features already contained in a Body are left out, App::Part placements applied, object labels and colours kept). App::Link and assembly instances are not expanded and the parametric history is not imported. Without the kernel: object inventory only.||cad
 onshape|Onshape||2|cad|P3|inventory|Cloud-native: there is no file to open.||Use Onshape's export to STEP or Parasolid text, then STEP here.
-revit|Autodesk Revit|.rvt .rfa|2|cad|P3|inventory|OLE2 container recognised; not decoded.||Export IFC or, for single equipment items, STEP / STL.
+revit|Autodesk Revit|.rvt .rfa|2|cad|P3|inventory|OLE2 container opened: property sets, preview image when present and the stream inventory. The model streams are not decoded.||Export IFC or, for single equipment items, STEP / STL.
 stl|Stereolithography mesh|.stl|3,4,7,8,9,10,11,15,17|mesh|P1|full|ASCII and binary (decided by the size rule); facets welded to an indexed mesh. No units, colours or materials.|STL;STL-based surface mesh|
 obj|Wavefront OBJ|.obj|3,7,8,15|mesh|P1|full|Vertices, faces (polygons fan-triangulated), line elements and group names; no materials or textures.|OBJ|
 ply|Polygon File Format|.ply|3,7,14,15|mesh|P1|full|ASCII and binary (little/big endian); faces or bare point clouds; colours and normals dropped.|PLY;Stanford triangle format|
@@ -176,8 +180,8 @@ export const UNKNOWN_FORMAT = UNKNOWN;
 const normName = s => String(s).toLowerCase().replace(/[^a-z0-9+]/g, '');
 // Registry search by format name, alias, id or extension (case and punctuation insensitive).
 export function lookupFormats(term) { const k = normName(term); return k ? FORMATS.filter(f => normName(f.name) === k || f.id === k || f.aliases.some(a => normName(a) === k) || f.ext.some(e => e.slice(1) === k) || f.names.some(n => normName(n) === k)) : []; }
-// detectFormat may also return the pseudo-ids 'unknown' and 'gzip' (a compressed wrapper that importFile unpacks).
-export const findFormat = id => BY[id] || (id === 'unknown' || id === 'gzip' ? UNKNOWN : null);
+// detectFormat may also return the pseudo-ids 'unknown', 'gzip', 'compress' (.Z) and 'zipwrap' (a zip holding one CAD file): wrappers that importFile unpacks.
+export const findFormat = id => BY[id] || (['unknown', 'gzip', 'compress', 'zipwrap'].includes(id) ? UNKNOWN : null);
 
 // ---------------------------------------------------------------- detection
 const MAGIC = [ // [offset, bytes-as-latin1, id, description]
@@ -193,7 +197,7 @@ const TEXT_SIG = [ // strong structural signatures on the first 8 kB of text
   ['cdb', /^\/(COM|PREP7|NOPR)\b|^NBLOCK,|^EBLOCK,/m], ['ensight', /^FORMAT\s*\r?\n\s*type:\s*ensight/im], ['openfoam', /FoamFile\s*\{/], ['su2', /^\s*NDIME\s*=/m], ['fluent', /^\s*\(\s*[012]\s+["(\d]/], ['cli', /\$\$HEADERSTART/],
   ['gerber', /%FS[LT][AI]X\d\dY\d\d\*%|%MO(MM|IN)\*%|%ADD\d+[A-Za-z]/], ['excellon', /^M48\s*$/m], ['mhd', /^\s*(ObjectType\s*=\s*Image|NDims\s*=)/m], ['pcd', /^(#\s*\.PCD|VERSION\s+[\d.]+\s*\r?\nFIELDS)/], ['ang', /^#\s*(TEM_PIXperUM|x-star|WorkingDistance|GRID:)/m],
   ['mol2', /@<TRIPOS>MOLECULE/], ['lammpsdump', /^ITEM:\s*TIMESTEP/], ['xsf', /^\s*(CRYSTAL|SLAB|POLYMER|MOLECULE|ANIMSTEPS\s+\d+)\s*\r?\n[\s\S]*?(PRIMVEC|ATOMS|PRIMCOORD)|^\s*ATOMS\s*\r?\n/], ['qeout', /Program PWSCF/], ['castep', /%BLOCK\s+(LATTICE_|POSITIONS_)/i],
-  ['cp2k', /^\s*&(GLOBAL|FORCE_EVAL|MOTION)\b/im], ['gmxtop', /^\s*\[\s*(moleculetype|defaults|atomtypes)\s*\]/m], ['jt', /^Version \d+\.\d+ JT/], ['parasolid', /^\*\*ABCDEFGHIJKLMNOPQRSTUVWXYZ[\s\S]{0,400}\*\*PARASOLID|^\*\*PART1;/], ['lammpsdata', /^\s*\d+\s+atoms\s*$[\s\S]*\bxlo\s+xhi\b/m],
+  ['cp2k', /^\s*&(GLOBAL|FORCE_EVAL|MOTION)\b/im], ['gmxtop', /^\s*\[\s*(moleculetype|defaults|atomtypes)\s*\]/m], ['jt', /^Version \d+\.\d+ JT/], ['brep', /^\s*(DBRep_DrawableShape\s+)?CASCADE Topology V\d/], ['parasolid', /^\*\*ABCDEFGHIJKLMNOPQRSTUVWXYZ[\s\S]{0,400}\*\*PARASOLID|^\*\*PART1;/], ['lammpsdata', /^\s*\d+\s+atoms\s*$[\s\S]*\bxlo\s+xhi\b/m],
 ];
 const isNum = s => s !== '' && Number.isFinite(Number(s));
 const ELEM = /^(?:[A-Z][a-z]?\d*[+-]?|\d{1,3})$/;
@@ -214,6 +218,7 @@ function cifKind(t) {
 }
 const hit = (id, confidence, why) => ({ id, confidence, why });
 function extsOf(base) { const lower = base.toLowerCase(), parts = lower.split('.'), out = []; for (let i = 1; i < parts.length; i++) out.push('.' + parts.slice(i).join('.')); return out; }
+const WRAPPED = /\.(stp|step|p21|igs|iges|brep|brp|ifc|3dm|stl|obj|ply|x_t|sat|jt)$/i;
 function zipKind(b, exts) {
   let names = []; try { names = F.unzip(b, /^$/).map(e => e.name); } catch (e) { return hit('unknown', 0.3, 'zip signature but the central directory could not be read'); }
   const has = re => names.some(n => re.test(n));
@@ -224,6 +229,7 @@ function zipKind(b, exts) {
   if (has(/(^|\/)\.zarray$|(^|\/)\.zgroup$|(^|\/)zarr\.json$/)) return hit(has(/\.zattrs$/) ? 'omezarr' : 'zarr', 0.85, 'zipped Zarr store (.zarray / .zgroup entries)');
   if (has(/(^|\/)matrix\/matrix$/i)) return hit('odbpp', 0.85, 'archive with matrix/matrix (ODB++ job)');
   for (const [e, id] of [['.f3d', 'fusion'], ['.f3z', 'fusion'], ['.sldprt', 'solidworks'], ['.sldasm', 'solidworks'], ['.3mf', '3mf']]) if (exts.includes(e)) return hit(id, 0.7, `zip container with extension ${e}`);
+  const wrapped = names.filter(n => WRAPPED.test(n)); if (wrapped.length === 1 || (wrapped.length && exts.some(e => ['.stpz', '.zip'].includes(e)))) return hit('zipwrap', 0.9, `zip archive wrapping ${wrapped[0]}`);
   return hit('unknown', 0.3, `zip archive with ${names.length} entries (${names.slice(0, 4).join(', ')}${names.length > 4 ? ', …' : ''}) that match no known geometry package`);
 }
 // Signature and structure first, extension second. Returns {id, confidence, why}.
@@ -248,11 +254,13 @@ export function detectFormat(name, bytes) {
   if (/^(II\*\0|MM\0\*|II\+\0|MM\0\+)/.test(head)) return hit(has('.ome.tif') || has('.ome.tiff') || /<OME\b/.test(latin(b, 0, 65536)) || /<OME\b/.test(latin(b, max(0, b.length - 65536), 65536)) ? 'ometiff' : 'tiff', 0.99, `TIFF byte-order mark and magic number${head[2] === '+' || head[3] === '+' ? ' (BigTIFF)' : ''}`);
   if (/^AC10\d\d/.test(head)) return hit('dwg', 0.99, `DWG release signature ${head.slice(0, 6)}`);
   if (b.length >= 8 && b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0) {
-    for (const [e, id] of [['.sldprt', 'solidworks'], ['.sldasm', 'solidworks'], ['.ipt', 'inventor'], ['.iam', 'inventor'], ['.par', 'solidedge'], ['.psm', 'solidedge'], ['.asm', 'solidedge'], ['.rvt', 'revit'], ['.rfa', 'revit']]) if (has(e)) return hit(id, 0.9, `OLE2 compound file with extension ${e}`);
+    for (const [e, id] of [['.sldprt', 'solidworks'], ['.sldasm', 'solidworks'], ['.slddrw', 'solidworks'], ['.ipt', 'inventor'], ['.iam', 'inventor'], ['.par', 'solidedge'], ['.psm', 'solidedge'], ['.asm', 'solidedge'], ['.rvt', 'revit'], ['.rfa', 'revit']]) if (has(e)) return hit(id, 0.9, `OLE2 compound file with extension ${e}`);
     const u = latin(b, 0, min(b.length, 131072)).replace(/\0/g, '');
     if (/RSeDb|RSeStorage/.test(u)) return hit('inventor', 0.8, 'OLE2 compound file with Inventor stream names'); if (/BasicFileInfo/.test(u)) return hit('revit', 0.8, 'OLE2 compound file with a Revit BasicFileInfo stream'); if (/JSitesList|PARASOLID/.test(u)) return hit('solidedge', 0.6, 'OLE2 compound file with Solid Edge-style streams');
     return hit('unknown', 0.3, 'OLE2 compound file (used by several CAD systems and office documents); the extension does not identify the application');
   }
+  if (b.length > 64 && b[4] === 0 && b[5] === 0 && b[6] === 0 && b[7] === 4) { for (let i = 8; i < 60; i++) if (b[i] === 0x14 && b[i + 1] === 0 && b[i + 2] === 6 && b[i + 3] === 0 && b[i + 4] === 8 && b[i + 5] === 0) return hit('solidworks', has('.sldprt') || has('.sldasm') || has('.slddrw') ? 0.97 : 0.85, 'SOLIDWORKS 2015+ container (compressed-stream marker 14 00 06 00 08 00 after the file header)'); }
+  if (b[0] === 0x1F && b[1] === 0x9D) return hit('compress', 0.9, 'Unix compress (.Z) container');
   for (const [off, sig, id, why] of MAGIC) if (b.length >= off + sig.length && latin(b, off, sig.length) === sig) { if (id === 'las') return hit(has('.laz') ? 'laz' : 'las', 0.98, why); if (id === 'psf' && !/^PSF\b/.test(head)) continue; return hit(id, 0.98, why); }
   if (b[0] === 0x1F && b[1] === 0x8B) { if (has('.nii.gz')) return hit('nifti', 0.9, 'gzip stream with extension .nii.gz'); if (has('.svgz')) return hit('svg', 0.9, 'gzip stream with extension .svgz'); return hit('gzip', 0.9, 'gzip container'); }
   if (dv && b.length >= 348 && (dv.getInt32(0, true) === 348 || dv.getInt32(0, false) === 348) && /^n[+i]1/.test(latin(b, 344, 3))) return hit('nifti', 0.99, 'NIfTI-1 header (sizeof_hdr = 348, magic n+1 / ni1)');
@@ -350,6 +358,7 @@ function sniff(id, c) {
     else if (id === 'parasolid') { m.encoding = head.startsWith('PS') ? 'binary' : 'text'; for (const k of ['SCH', 'APPL', 'FORMAT', 'KEY', 'DATE', 'USFLD_SIZE']) { const r = new RegExp(k + '=([^;\\r\\n]*)').exec(head); if (r) m[k.toLowerCase()] = r[1].trim(); } }
     else if (id === 'sat') { const L = head.split(/\r?\n/), a = L[0].trim().split(/\s+/); m.version = +a[0] / 100; m.records = +a[1]; m.bodies = +a[2]; const p = /^\d+ (.*?) \d+ (ACIS [^\d]*[\d.]+[^\d]*) \d+ (.*)$/.exec(L[1] || ''); if (p) { m.product = p[1]; m.acis = p[2].trim(); m.date = p[3]; } const u = (L[2] || '').trim().split(/\s+/).map(Number); if (u.length >= 2) { m.unitScale_mm = u[0]; m.resabs = u[1]; } const t = txt(c); m.entityCounts = { body: count(t, /^-?\d*\s*body\b/gm), lump: count(t, /^-?\d*\s*lump\b/gm), shell: count(t, /^-?\d*\s*shell\b/gm), face: count(t, /^-?\d*\s*face\b/gm), edge: count(t, /^-?\d*\s*edge\b/gm), 'spline surface': count(t, /spline-surface/g), 'plane surface': count(t, /plane-surface/g), 'cone surface': count(t, /cone-surface/g) }; }
     else if (id === 'ifc') { const s = F.parseSTEP(b); Object.assign(m, s.meta); m.buildingElements = Object.fromEntries(Object.entries(s.meta.entityCounts || {}).filter(([k]) => /^IFC(WALL|SLAB|BEAM|COLUMN|PIPE|FLOW|TANK|DOOR|WINDOW|SPACE|BUILDING|EQUIPMENT|FURNISHING|DUCT|VALVE|PUMP)/.test(k))); }
+    else if (id === 'brep') { m.version = (/CASCADE Topology V(\d+)/.exec(head) || [])[1]; const t = txt(c); for (const k of ['Locations', 'Curve2ds', 'Curves', 'Polygon3D', 'PolygonOnTriangulations', 'Surfaces', 'Triangulations', 'TShapes']) { const r = new RegExp('^' + k + ' (\\d+)', 'm').exec(t); if (r) m[k[0].toLowerCase() + k.slice(1)] = +r[1]; } }
     else if (id === 'las' || id === 'laz') { const v = new DataView(b.buffer, b.byteOffset, b.byteLength); if (b.length >= 227) { m.version = `${b[24]}.${b[25]}`; m.systemId = latin(b, 26, 32).replace(/\0.*$/, ''); m.software = latin(b, 58, 32).replace(/\0.*$/, ''); m.pointFormat = b[104] & 0x3F; m.compressed = !!(b[104] & 0x80) || id === 'laz'; m.pointRecordBytes = v.getUint16(105, true); m.points = v.getUint32(107, true); m.scale = [131, 139, 147].map(o => v.getFloat64(o, true)); m.offset = [155, 163, 171].map(o => v.getFloat64(o, true)); m.bboxMax = [179, 195, 211].map(o => v.getFloat64(o, true)); m.bboxMin = [187, 203, 219].map(o => v.getFloat64(o, true)); if (b[24] === 1 && b[25] >= 4 && b.length >= 255 && !m.points) m.points = Number(v.getBigUint64(247, true)); } }
     else if (id === 'e57') { const v = new DataView(b.buffer, b.byteOffset, b.byteLength); m.version = `${v.getUint32(8, true)}.${v.getUint32(12, true)}`; }
     else if (id === 'xtc') { const v = new DataView(b.buffer, b.byteOffset, b.byteLength), mg = v.getInt32(0, false); m.kind = mg === 1995 ? 'XTC (compressed coordinates)' : 'TRR (full precision)'; if (mg === 1995) { m.atoms = v.getInt32(4, false); m.firstStep = v.getInt32(8, false); m.firstTime_ps = v.getFloat32(12, false); } }
@@ -496,46 +505,129 @@ function suitability(g, f) {
   return out;
 }
 
+// ---------------------------------------------------------------- kernel and native-container paths
+const KERNEL_FMT = { step: 'step', iges: 'iges', brep: 'brep', '3dm': '3dm', ifc: 'ifc' };
+const describeDeflection = d => !d ? '' : d.type === 'segments' ? `${d.circleSegments} segments per full circle (curved profiles and sweeps)` : `linear deflection ${d.linear}${d.type === 'absolute' ? ' mm' : ' × the mean bounding-box edge'}${d.angular ? `, angular deflection ${d.angular} rad` : ''}`;
+const errText = e => (e && e.message ? e.message : String(e));
+// Tessellate through a kernel. Returns {g} (a mesh result carrying notes / lost / meta, like the built-in parsers) or {note}
+// saying why the kernel path was not taken.
+async function kernelImport(format, ctx, extra) {
+  const fid = KERNEL_FMT[format.id], kn = K.KERNELS[K.kernelFor(fid)]; let t;
+  try { t = await K.tessellate({ format: fid, bytes: ctx.bytes, options: ctx.opts.tessellation || {} }); } catch (e) { return { note: `the ${kn.engine} kernel (${kn.name}) could not be used — ${errText(e)}` }; }
+  if (!t.mesh.faces.length) return { note: `the ${kn.engine} kernel read the file but produced no triangles${t.warnings.length ? ` (${t.warnings.join('; ')})` : ''}`, empty: t };
+  const st = t.stats, exact = fid !== '3dm' && fid !== 'ifc', notes = [], lost = [], meta = { ...(t.meta || {}) };
+  notes.push(`geometry path: ${kn.engine} kernel (${kn.name} ${kn.version}, loaded on demand) — ${st.bodies} ${st.bodies === 1 ? 'body' : 'bodies'} (${st.solids} closed), ${exact || st.faces ? `${st.faces} B-rep faces, ` : ''}${st.triangles} triangles in ${st.seconds.toFixed(2)} s`);
+  if (fid === 'step' || fid === 'iges' || fid === 'brep') {
+    notes.push(`the mesh is a tessellation of the exact B-rep at ${describeDeflection(st.deflection)}: curved faces are approximated to within that tolerance and the analytic / NURBS surface definitions are not retained`);
+    let light = null, declared = ''; if (fid !== 'brep' && ctx.bytes.length <= 3e7) { try { const lr = fid === 'step' ? F.parseSTEP(ctx.bytes) : F.parseIGES(ctx.bytes); light = lr.meta || null; declared = lr.units || ''; } catch (e) { light = null; } }
+    if (light) { Object.assign(meta, light); const u = declared; if (u) meta.declaredUnits = u; notes.push(`coordinates are in millimetres: the kernel converts from the unit the file declares${u ? ` (${u})` : ''}`); const fileFaces = light.entityCounts ? (light.entityCounts.ADVANCED_FACE || 0) + (light.entityCounts.FACE_SURFACE || 0) : 0; if (fid === 'step' && fileFaces > st.faces) lost.push(`the file lists ${fileFaces} faces but the kernel transferred ${st.faces}: some faces were not translated`); }
+    else if (fid !== 'brep') notes.push('coordinates are in millimetres: the kernel converts from the unit the file declares');
+    else notes.push('a BREP file declares no length unit: coordinates are kept as stored (OpenCASCADE applications such as FreeCAD write millimetres)');
+    lost.push(fid === 'brep' ? 'BREP stores shapes only: there are no names, colours or units to import' : 'the product structure is flattened to a list of bodies (name and colour kept per body, instances placed); PMI, annotations, layers and validation properties are not imported');
+  } else if (fid === '3dm') { notes.push('3DM geometry comes from what the file stores: mesh objects and saved render meshes are used as they are, and are not re-tessellated to a deflection'); lost.push('materials, textures, groups, views, annotations and curves are not imported'); }
+  else { notes.push(`IFC body geometry is tessellated in metres with ${describeDeflection(st.deflection)}; planar faces are exact`); lost.push('property sets, quantities, materials, the spatial structure and element relationships are not imported'); }
+  for (const w of t.warnings) (/not tessellated|could not|missing|not converted|no stored|only some/.test(w) ? lost : notes).push(w);
+  const g = { ...t.mesh, notes, lost, meta }; if (t.parts.length > 1) g.shells = `${t.parts.length} bodies kept as separate shells (touching bodies are not merged)`;
+  if (st.untessellatedFaces || (fid === '3dm' && t.meta && t.meta.converted && (t.meta.converted.brepNone || t.meta.converted.brepPartial || t.meta.converted.extrusionNone))) g.complete = false;
+  extra.parts = t.parts; extra.kernel = { name: kn.name, engine: kn.engine, version: kn.version, licence: kn.licence, stats: st };
+  return { g };
+}
+// FreeCAD: every stored shape is an OpenCASCADE BREP, tessellated one object at a time and placed by its container.
+async function fcstdImport(ctx, extra) {
+  const d = N.readFCStd(ctx.bytes), kn = K.KERNELS.occt; extra.meta = { ...(extra.meta || {}), ...d.meta }; if (d.extra.preview) extra.preview = d.extra.preview;
+  const info = [`FreeCAD document${d.meta.programVersion ? ` written by FreeCAD ${d.meta.programVersion}` : ''}: ${d.meta.objects.length} objects, ${d.shapes.length} with a stored shape to import`]; if (extra.preview) info.push(`thumbnail (${extra.preview.mime}, ${extra.preview.bytes.length} bytes)`);
+  if (!d.shapes.length) return { info, note: 'the document stores no visible solid or surface shapes', notes: d.notes };
+  const vertices = [], faces = [], parts = [], notes = [...d.notes], lost = []; let failed = 0, secs = 0, brepFaces = 0, defl = null;
+  for (const s of d.shapes) {
+    let t; try { t = await K.tessellate({ format: 'brep', bytes: s.brep, options: ctx.opts.tessellation || {} }); } catch (e) { if (!parts.length && !failed && /could not be loaded|no kernel/.test(errText(e))) return { info, note: `the ${kn.engine} kernel (${kn.name}) could not be used — ${errText(e)}`, notes: d.notes }; failed++; lost.push(`object "${s.label}" (${s.type}): the kernel could not read its shape (${errText(e)})`); continue; }
+    secs += t.stats.seconds; defl = t.stats.deflection; if (!t.mesh.faces.length) continue; const base = vertices.length, f0 = faces.length, M = s.transform;
+    for (const p of t.mesh.vertices) vertices.push(M ? [M[0] * p[0] + M[1] * p[1] + M[2] * p[2] + M[3], M[4] * p[0] + M[5] * p[1] + M[6] * p[2] + M[7], M[8] * p[0] + M[9] * p[1] + M[10] * p[2] + M[11]] : p);
+    for (const f of t.mesh.faces) faces.push([f[0] + base, f[1] + base, f[2] + base]);
+    for (const p of t.parts) { parts.push({ ...p, name: t.parts.length > 1 ? `${s.label} / ${p.name}` : s.label, colour: s.colour || p.colour, type: s.type, source: s.file, faceRange: [p.faceRange[0] + f0, p.faceRange[1] + f0] }); brepFaces += p.brepFaces || 0; }
+    for (const w of t.warnings) (/not tessellated|could not|missing/.test(w) ? lost : notes).push(`${s.label}: ${w}`);
+  }
+  if (!faces.length) return { info, note: 'none of the stored shapes produced triangles (wires, sketches or empty shapes only)', notes: d.notes };
+  notes.unshift(`geometry path: ${kn.engine} kernel (${kn.name} ${kn.version}, loaded on demand) — ${parts.length} ${parts.length === 1 ? 'body' : 'bodies'} (${parts.filter(p => p.closed).length} closed) from ${d.shapes.length - failed} FreeCAD ${d.shapes.length - failed === 1 ? 'object' : 'objects'}, ${brepFaces} B-rep faces, ${faces.length} triangles in ${secs.toFixed(2)} s`, `the mesh is a tessellation of the stored OpenCASCADE shapes at ${describeDeflection(defl)}: the exact surfaces are not retained`, 'FreeCAD stores shapes in millimetres');
+  lost.push('the parametric history (sketches, constraints, feature parameters, spreadsheets) is not imported: only the resulting shapes are');
+  const g = { kind: 'mesh', vertices, faces, units: 'mm', notes, lost, meta: extra.meta }; if (parts.length > 1) g.shells = `${parts.length} bodies kept as separate shells (touching bodies are not merged)`; if (failed) g.complete = false;
+  extra.parts = parts; extra.kernel = { name: kn.name, engine: kn.engine, version: kn.version, licence: kn.licence, stats: { bodies: parts.length, solids: parts.filter(p => p.closed).length, faces: brepFaces, triangles: faces.length, seconds: secs, deflection: defl } };
+  return { g, info };
+}
+// Container-level readers for native CAD files: what they recover is reported item by item.
+const NATIVE = { solidworks: c => N.parseSolidWorks(c.bytes), inventor: c => N.parseOleCad(c.bytes, 'Inventor'), solidedge: c => N.parseOleCad(c.bytes, 'Solid Edge'), revit: c => N.parseOleCad(c.bytes, 'Revit'), fusion: c => N.parseFusion(c.bytes), jt: c => N.parseJT(c.bytes), parasolid: c => N.parseParasolid(c.bytes), sat: c => N.parseSAT(c.bytes) };
+
 // ---------------------------------------------------------------- import
 // importFile({name, bytes}, opts) → {format, detection, geometry|null, extra, report}.
 // opts: format (force an id), repair (default true), files ({name: bytes} companions for .xdmf / .pvd), raw (companion
-// data for detached NRRD / MHD / NIfTI headers), nx, ny, nz, dtype (headerless volumes), threshold, dataset (HDF5 path).
+// data for detached NRRD / MHD / NIfTI headers), nx, ny, nz, dtype (headerless volumes), threshold, dataset (HDF5 path),
+// kernel (false: never load a geometry kernel), tessellation ({linearDeflection, angularDeflection, deflectionType}).
+// extra.parts lists the bodies of a kernel import ({name, colour, faceRange, area, volume, …}), extra.preview an embedded
+// preview image ({mime, bytes}), extra.embedded any neutral data streams unpacked from a native container.
 export async function importFile({ name, bytes }, opts = {}) {
   let b = F.toBytes(bytes ?? ''), det = opts.format ? { id: opts.format, confidence: 1, why: 'format chosen by the user' } : detectFormat(name, b);
   const report = { imported: [], assumptions: [], lost: [], validation: [], repairs: [], suitability: [], provenance: { file: name || '', bytes: b.length, format: '', version: null, importedAt: null, units: null, detection: det.why, confidence: det.confidence, conversions: [] } }, extra = {};
-  if (det.id === 'gzip') { try { b = F.gunzip(b); const inner = detectFormat(String(name || '').replace(/\.gz$/i, ''), b); report.imported.push(`gzip container inflated to ${b.length} bytes`); report.provenance.conversions.push('gzip decompression'); det = { ...inner, why: `gzip container; inner content: ${inner.why}` }; } catch (e) { det = { id: 'unknown', confidence: 0.2, why: `gzip container that could not be inflated (${e.message})` }; } report.provenance.detection = det.why; }
+  for (let depth = 0; depth < 3 && ['gzip', 'compress', 'zipwrap'].includes(det.id); depth++) {
+    const kind = det.id;
+    try {
+      let innerName = String(name || '').replace(/\.(gz|z)$/i, '').replace(/\.stpz$/i, '.stp');
+      if (kind === 'gzip') b = F.gunzip(b); else if (kind === 'compress') b = N.unLZW(b); else { const en = F.unzip(b, WRAPPED).filter(e => e.data && WRAPPED.test(e.name)).sort((x, y) => y.size - x.size)[0]; if (!en) throw new Error('the wrapped file could not be inflated'); b = en.data; innerName = en.name; }
+      const inner = detectFormat(innerName, b), label = kind === 'gzip' ? 'gzip container' : kind === 'compress' ? 'Unix compress (.Z) container' : `zip archive (entry ${innerName})`;
+      report.imported.push(`${label} inflated to ${b.length} bytes`); report.provenance.conversions.push(kind === 'gzip' ? 'gzip decompression' : kind === 'compress' ? 'LZW (.Z) decompression' : 'zip extraction'); det = { ...inner, why: `${label}; inner content: ${inner.why}` };
+    } catch (e) { det = { id: 'unknown', confidence: 0.2, why: `${kind === 'gzip' ? 'gzip' : kind === 'compress' ? 'Unix compress (.Z)' : 'zip'} container that could not be unpacked (${errText(e)})` }; }
+    report.provenance.detection = det.why;
+  }
   const format = BY[det.id] || UNKNOWN, ctx = { name: name || '', bytes: b, opts };
   report.provenance.format = format.name; report.imported.push(`recognised as ${format.name} (${det.why}; confidence ${(det.confidence * 100).toFixed(0)} %)`);
   if (det.confidence < 0.6 && format.id !== 'unknown') report.assumptions.push('format identification rests on weak evidence (mainly the file extension): confirm that the result is what you expect');
-  let g = null, failed = null;
-  if (H[format.id]) { try { g = H[format.id](ctx); } catch (e) { failed = e && e.message ? e.message : String(e); if (e instanceof TypeError || e instanceof RangeError) failed = `${format.name}: the file is truncated or malformed (the reader stopped with: ${failed})`; } }
-  if (failed) { report.validation.push(chk('File could be parsed', false, failed)); report.lost.push('no geometry imported because the file could not be parsed'); if (format.neutral) report.advice = format.neutral; extra.meta = sniff(format.id, ctx); }
+  let g = null, failed = null, native = false, kernelNote = '';
+  // 1. exact-geometry kernels (on demand)
+  if (opts.kernel !== false && (KERNEL_FMT[format.id] || format.id === 'fcstd')) {
+    try {
+      if (format.id === 'fcstd') { const r = await fcstdImport(ctx, extra); report.imported.push(...(r.info || [])); if (r.g) g = r.g; else { kernelNote = r.note; report.assumptions.push(...(r.notes || [])); native = true; } }
+      else { const r = await kernelImport(format, ctx, extra); if (r.g) g = r.g; else kernelNote = r.note; }
+    } catch (e) { kernelNote = `the kernel path failed (${errText(e)})`; }
+  } else if (opts.kernel === false && (KERNEL_FMT[format.id] || format.id === 'fcstd')) kernelNote = 'the geometry kernel was switched off for this import';
+  // 2. container-level readers for native CAD files
+  if (!g && NATIVE[format.id]) {
+    try { const r = NATIVE[format.id](ctx); native = true; extra.meta = { ...(extra.meta || {}), ...r.meta }; Object.assign(extra, r.extra); report.imported.push(...r.recovered.map(s => `recovered — ${s}`)); report.lost.push(...r.notRecovered); if (r.geometry) g = r.geometry; }
+    catch (e) { report.assumptions.push(`the container could not be opened in detail (${errText(e)}): only the signature-level facts are reported`); }
+  }
+  // 3. built-in readers
+  if (!g && H[format.id]) { try { g = H[format.id](ctx); } catch (e) { failed = e && e.message ? e.message : String(e); if (e instanceof TypeError || e instanceof RangeError) failed = `${format.name}: the file is truncated or malformed (the reader stopped with: ${failed})`; } }
+  if (kernelNote) { const got = !!(g && g.kind), fallback = got ? 'the built-in lightweight reader was used instead' : H[format.id] ? 'the built-in lightweight reader was tried instead' : 'only the inventory below is available'; (got ? report.assumptions : report.lost).push(`geometry path: ${kernelNote}; ${fallback}`); }
+  else if (g && extra.kernel) report.provenance.conversions.push(`B-rep tessellation by ${extra.kernel.name} ${extra.kernel.version}`);
+  if (failed) { report.validation.push(chk('File could be parsed', false, failed)); report.lost.push('no geometry imported because the file could not be parsed'); if (format.neutral) report.advice = format.neutral; extra.meta = { ...(extra.meta || {}), ...sniff(format.id, ctx) }; }
   if (g && g.kind === undefined) g = null;
   const res = g; if (g && g.kind === null) g = null;
   if (res) {
     report.assumptions.push(...(res.notes || [])); report.lost.push(...(res.lost || []));
     for (const k of ['truncated', 'capped']) if (res[k]) report.lost.push(res[k]);
-    for (const k of ['meta', 'frames', 'regions', 'layers', 'cellData', 'orientation', 'quality', 'phases', 'layerStack', 'wireframe', 'sets', 'stats', 'groups', 'beams', 'wire', 'elementCounts']) if (res[k] !== undefined && !(Array.isArray(res[k]) && !res[k].length)) extra[k === 'stats' ? 'fileStats' : k] = res[k];
+    for (const k of ['meta', 'frames', 'regions', 'layers', 'cellData', 'orientation', 'quality', 'phases', 'layerStack', 'wireframe', 'sets', 'stats', 'groups', 'beams', 'wire', 'elementCounts']) if (res[k] !== undefined && !(Array.isArray(res[k]) && !res[k].length)) extra[k === 'stats' ? 'fileStats' : k] = k === 'meta' ? { ...(extra.meta || {}), ...res.meta } : res[k];
     if (res.grey) extra.fields = { grey: res.grey, range: res.valueRange, threshold: res.threshold };
     if (res.layerStack) report.imported.push(`layer stack of ${res.layerStack.length} layers`);
   }
   if (!g && !failed) {
-    extra.meta = { ...(extra.meta || {}), ...sniff(format.id, ctx) };
-    const facts = Object.entries(extra.meta).filter(([k, v]) => v !== null && v !== undefined && typeof v !== 'object' && k !== 'bytes').slice(0, 8).map(([k, v]) => `${k}: ${v}`);
+    if (!native || format.id === 'fcstd') extra.meta = { ...sniff(format.id, ctx), ...(extra.meta || {}) };
+    const facts = native && format.id !== 'fcstd' ? [] : Object.entries(extra.meta).filter(([k, v]) => v !== null && v !== undefined && typeof v !== 'object' && k !== 'bytes').slice(0, 8).map(([k, v]) => `${k}: ${v}`);
     if (facts.length) report.imported.push(`header metadata — ${facts.join('; ')}`);
-    if (!res || !res.layerStack) { report.lost.push(format.id === 'unknown' ? 'nothing imported' : `geometry not reconstructed: ${format.note}`); report.advice = format.neutral || UNKNOWN.neutral; report.validation.push(chk('Geometry reconstructed', false, format.support === 'inventory' ? `${format.name} is supported at inventory level only (recognition and header metadata)` : 'the file was recognised but holds no geometry that this importer can rebuild')); }
+    if (!res || !res.layerStack) { report.lost.push(format.id === 'unknown' ? 'nothing imported' : native && format.id !== 'fcstd' ? `no geometry reconstructed — ${format.note}` : kernelNote ? `geometry not reconstructed: ${format.name} needs the geometry kernel for its surfaces, and the kernel was not used for this import` : `geometry not reconstructed: ${format.note}`); report.advice = format.neutral || UNKNOWN.neutral; report.validation.push(chk('Geometry reconstructed', false, format.support === 'inventory' ? `${format.name} is supported at inventory level only (recognition and header metadata)` : native ? `${format.name}: metadata was recovered from the container, but its geometry cannot be rebuilt without the vendor's kernel` : kernelNote ? `${format.name}: the geometry kernel was not available and there is no built-in reader for this geometry` : 'the file was recognised but holds no geometry that this importer can rebuild')); }
   }
   if (g) {
     for (const k of ['notes', 'lost']) delete g[k];
+    if (extra.kernel) delete g.meta;
     const n = g.kind === 'mesh' ? `${g.vertices.length} vertices and ${g.faces.length} triangles` : g.kind === 'atoms' ? `${g.atoms.length} atoms${g.cell ? ' in a periodic cell' : ''}` : g.kind === 'voxels' ? `${g.nx} × ${g.ny} × ${g.nz} voxels` : g.kind === 'lattice' ? (g.pointCloud ? `${g.nodes.length} points` : `${g.nodes.length} nodes and ${g.edges.length} edges`) : g.kind === 'layout' ? `${g.polygons.length} polygons` : `${(g.rods || []).length} rods`;
     report.imported.push(`${g.kind} geometry: ${n}`); if (extra.frames) report.imported.push(`${extra.frames.length} time frames for animation`); if (extra.elementCounts) report.imported.push(`elements — ${Object.entries(extra.elementCounts).map(([k, v]) => `${k}: ${v}`).join(', ')}`);
+    if (extra.parts) report.imported.push(`bodies — ${extra.parts.slice(0, 12).map(p => `${p.name}${p.closed && p.volume !== undefined ? ` (closed, ${p.volume.toPrecision(5)} ${g.units || 'units'}³)` : ' (open surface)'}`).join('; ')}${extra.parts.length > 12 ? `; … ${extra.parts.length - 12} more` : ''}`);
     if (extra.frames) g.frames = extra.frames;
-    const facts = validate(g, report, extra, opts); report.suitability = suitability(g, facts);
+    const nf = g.kind === 'mesh' ? g.faces.length : 0, facts = validate(g, report, extra, opts); report.suitability = suitability(g, facts);
+    if (extra.parts && g.kind === 'mesh' && g.faces.length !== nf) { for (const p of extra.parts) p.faceRange = null; report.assumptions.push('the mesh repair changed the triangle list, so the per-body triangle ranges no longer apply and were cleared'); }
     report.provenance.units = g.units || null; if (!g.units) report.assumptions.push('the file declares no length unit');
     if (g.complete === false) report.validation.push(chk('Complete reconstruction', false, 'only part of the file\'s geometry could be rebuilt (see "lost")'));
+    if (native && format.neutral && g.wireframe) report.advice = format.neutral;
   }
+  if (extra.embedded) report.assumptions.push(`${extra.embedded.length} embedded data stream(s) are available under extra.embedded for saving`);
   report.provenance.version = (extra.meta && (extra.meta.version ?? extra.meta.protocol ?? extra.meta.schema ?? extra.meta.release ?? extra.meta.igesVersionFlag ?? extra.meta.superblockVersion)) ?? null;
-  report.provenance.repairs = report.repairs.length; report.provenance.support = format.support;
+  report.provenance.repairs = report.repairs.length; report.provenance.support = format.support; report.provenance.geometryPath = extra.kernel ? `kernel: ${extra.kernel.name} ${extra.kernel.version}` : g ? 'built-in reader' : 'none';
   report.assumptions = [...new Set(report.assumptions)]; report.lost = [...new Set(report.lost)];
   return { format, detection: det, geometry: g, extra, report };
 }

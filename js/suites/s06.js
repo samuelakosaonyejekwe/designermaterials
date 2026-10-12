@@ -49,7 +49,9 @@ const SOLV = {
   ethanol: { name: 'ethanol', f: 'C2H5OH', ant: [[8.20417, 1642.89, 230.3, -57, 80], [7.68117, 1332.04, 199.2, 80, 240]], Tc: 514.0, Pc: 6.14e6, w: 0.645, rho0: 785, kap: 1.1e-9 },
   methanol: { name: 'methanol', f: 'CH3OH', ant: [[8.08097, 1582.271, 239.726, 15, 100]], Tc: 512.6, Pc: 8.08e6, w: 0.565, rho0: 787, kap: 1.2e-9 },
   eg: { name: 'ethylene glycol', f: 'C2H6O2', ant: [[8.09083, 2088.936, 203.454, 50, 200]], Tc: 720, Pc: 8.0e6, w: 0.507, rho0: 1110, kap: 3.7e-10 },
-  dmf: { name: 'N,N-dimethylformamide', f: 'C3H7NO', ant: [[6.92796, 1400.87, 196.43, 30, 153]], Tc: 649.6, Pc: 4.42e6, w: 0.318, rho0: 944, kap: 6.5e-10 },
+  // DMF: the tabulated low-temperature fit (30–90 °C) extrapolates to a boiling point 3 K too low, so the upper range is an
+  // Antoine curve through the 90 °C value of that fit, the normal boiling point (153.0 °C) and the critical point.
+  dmf: { name: 'N,N-dimethylformamide', f: 'C3H7NO', ant: [[6.92796, 1400.87, 196.43, 30, 90], [7.53108, 1907.83, 257.262, 90, 153]], Tc: 649.6, Pc: 4.42e6, w: 0.318, rho0: 944, kap: 6.5e-10 },
   toluene: { name: 'toluene', f: 'C7H8', ant: [[6.95464, 1344.8, 219.482, 6, 137]], Tc: 591.75, Pc: 4.108e6, w: 0.264, rho0: 862, kap: 9e-10 },
 };
 const antSet = (s, tC) => s.ant.find(a => tC <= a[4]) || s.ant[s.ant.length - 1];

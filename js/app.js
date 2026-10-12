@@ -1,11 +1,12 @@
 // Application shell: navigation (with back / forward controls), routing, theme, install, offline and updates.
 import { h, icon, toast, download } from './core/ui.js';
 import { loadProject, prefs, project, onProject } from './core/store.js';
-import { loadSpec } from './core/engine.js';
+import { loadSpec, benchStatus } from './core/engine.js';
+import { kv } from './core/store.js';
 import { startAutoRefresh } from './core/live.js';
 
-const main = document.getElementById('main'), top = document.getElementById('top'), side = document.getElementById('side'), bottom = document.getElementById('bottom');
-const NAV = [['#/', 'home', 'Home'], ['#/case', 'flow', 'Case pipeline'], ['#/suites', 'grid', 'Suites'], ['#/library', 'book', 'Materials library'], ['#/environments', 'flask', 'Environments'], ['#/geometry', 'cube', 'Geometry Studio'], ['#/data', 'upload', 'Data portal'], ['#/live', 'globe', 'Live data'], ['#/reference', 'doc', 'Reference'], ['#/settings', 'install', 'Install & settings']];
+const main = document.getElementById('main'), topBar = document.getElementById('top'), side = document.getElementById('side'), bottom = document.getElementById('bottom');
+const NAV = [['#/', 'home', 'Home'], ['#/case', 'flow', 'Case pipeline'], ['#/suites', 'grid', 'Suites'], ['#/library', 'book', 'Materials library'], ['#/environments', 'flask', 'Environments'], ['#/geometry', 'cube', 'Geometry Studio'], ['#/data', 'upload', 'Data portal'], ['#/live', 'globe', 'Live data'], ['#/benchmarks', 'check', 'Validation benchmarks'], ['#/reference', 'doc', 'Reference'], ['#/settings', 'install', 'Install & settings']];
 const routes = {
   '': async r => (await import('./pages/main.js')).homePage(r),
   suites: async r => (await import('./pages/main.js')).suitesPage(r),
@@ -17,6 +18,7 @@ const routes = {
   data: async r => (await import('./pages/main.js')).dataPage(r),
   live: async r => (await import('./pages/main.js')).livePage(r),
   reference: async r => (await import('./pages/main.js')).referencePage(r),
+  benchmarks: async r => (await import('./pages/main.js')).benchmarksPage(r),
   settings: async r => (await import('./pages/main.js')).settingsPage(r, ctx),
 };
 
@@ -64,13 +66,14 @@ async function downloadBundle() {
 }
 const ctx = { applyTheme, install, canInstall: () => !!deferred, swStatus: () => swState, downloadBundle,
   checkUpdate: async () => { if (!reg) return toast(swState); await reg.update(); toast(reg.waiting || reg.installing ? 'A new version is being installed' : 'You have the latest version', 'ok'); },
+  precachePacks: async () => { toast('Downloading CAD geometry kernels…'); try { const list = (await (await fetch('assets.json')).json()).packs || []; let n = 0; for (const f of list) { const r = await fetch(f); if (r.ok) { await r.arrayBuffer(); n++; } } toast(`${n} kernel files stored for offline use`, 'ok', 6000); } catch (e) { toast('Could not download: ' + e.message, 'bad'); } },
   precache: async () => { toast('Downloading all suites and data for offline use…'); const r = await swMsg('precacheAll'); toast(r ? `Ready for offline use: ${r.cached} files stored` : 'Offline storage will complete after the next reload', 'ok', 6000); } };
 
 // ---- shell ----
 const net = h('span#net');
 const syncNet = () => { const on = navigator.onLine !== false; net.textContent = on ? 'Online · live data' : 'Offline · cached data'; net.classList.toggle('off', !on); };
 function shell(spec) {
-  top.replaceChildren(h('button.iconbtn', { 'aria-label': 'Menu', id: 'menuBtn', onclick: () => side.classList.toggle('open') }, icon('menu', 18)), h('a.brand', { href: '#/' }, h('img', { src: 'icons/icon.svg', alt: '', width: 28, height: 28 }), h('span', 'Designer Materials')), h('div.navpair', { role: 'group', 'aria-label': 'History' }, backBtn, fwdBtn), h('div.grow'), net, installBtn,
+  topBar.replaceChildren(h('button.iconbtn', { 'aria-label': 'Menu', id: 'menuBtn', onclick: () => side.classList.toggle('open') }, icon('menu', 18)), h('a.brand', { href: '#/' }, h('img', { src: 'icons/icon.svg', alt: '', width: 28, height: 28 }), h('span', 'Designer Materials')), h('div.navpair', { role: 'group', 'aria-label': 'History' }, backBtn, fwdBtn), h('div.grow'), net, installBtn,
     h('button.iconbtn', { 'aria-label': 'Switch light / dark', title: 'Switch light / dark', onclick: () => { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); prefs.set('theme', cur === 'dark' ? 'light' : 'dark'); applyTheme(); route(true); } }, icon('sun', 18)));
   side.replaceChildren(...NAV.map(([href, ic, label]) => h('a', { href, 'data-nav': href }, icon(ic, 18), label)), h('div.sep', '29 engineering suites'), ...spec.groups.map((g, k) => h('div.sgroup', { class: 'g' + (k + 1) }, h('div.sghead', h('i'), g.name), g.suites.map(i => spec.suites[i - 1]).map(s => h('a.mini', { href: `#/suite/${s.id}`, 'data-nav': `#/suite/${s.id}`, title: s.resp }, h('span.sn', String(s.id).padStart(2, '0')), h('span.st', s.name))))));
   bottom.replaceChildren(...[NAV[0], NAV[1], NAV[2], NAV[3], NAV[5]].map(([href, ic, label]) => h('a', { href, 'data-nav': href }, icon(ic, 20), label.split(' ')[0])));
@@ -88,4 +91,4 @@ addEventListener('hashchange', () => { if (history.state?.i === undefined) { idx
 addEventListener('popstate', () => { if (history.state?.i !== undefined) { idx = history.state.i; syncNav(); } });
 addEventListener('keydown', e => { if (e.altKey && e.key === 'ArrowLeft') history.back(); if (e.altKey && e.key === 'ArrowRight') history.forward(); });
 
-(async () => { try { const spec = await loadSpec(); await loadProject(); shell(spec); await route(); initSW(); startAutoRefresh(); } catch (e) { main.replaceChildren(h('div.card.error', h('h2', 'Designer Materials could not start'), h('pre', String(e.stack || e)))); } })();
+(async () => { try { const spec = await loadSpec(); await loadProject(); for (let i = 1; i <= 29; i++) kv.get('bench:' + i).then(b => { if (b) benchStatus[i] = b; }); shell(spec); await route(); initSW(); startAutoRefresh(); } catch (e) { main.replaceChildren(h('div.card.error', h('h2', 'Designer Materials could not start'), h('pre', String(e.stack || e)))); } })();

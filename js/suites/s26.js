@@ -7,7 +7,15 @@ import * as chem from '../core/chem.js';
 const F = N.fmt, R = N.R_GAS;
 const kp = (key, label, value, unit, explain, good = null) => ({ key, label, value, unit, explain, good });
 const pct = v => F(100 * v, 3) + ' %';
-function t975(nu) { const z = 1.959964, v = Math.max(1, nu), z3 = z ** 3, z5 = z ** 5, z7 = z ** 7; return z + (z3 + z) / (4 * v) + (5 * z5 + 16 * z3 + 3 * z) / (96 * v * v) + (3 * z7 + 19 * z5 + 17 * z3 - 15 * z) / (384 * v ** 3); }
+// Student-t 97.5 % quantile: Simpson quadrature of the density (substitution x = √ν·tan θ) inverted by a bracketed root search;
+// the Cornish–Fisher expansion in 1/ν is kept for ν > 200, where it is accurate to better than 10⁻⁸
+function t975(nu) {
+  const v = Math.max(1, nu), z = 1.959964, z3 = z ** 3, z5 = z ** 5, z7 = z ** 7;
+  if (v > 200) return z + (z3 + z) / (4 * v) + (5 * z5 + 16 * z3 + 3 * z) / (96 * v * v) + (3 * z7 + 19 * z5 + 17 * z3 - 15 * z) / (384 * v ** 3);
+  const c = Math.exp(N.gammaLn((v + 1) / 2) - N.gammaLn(v / 2)) / Math.sqrt(Math.PI);
+  const area = t => { const b = Math.atan(t / Math.sqrt(v)), n = 200, h = b / n; let s = 1 + Math.pow(Math.cos(b), v - 1); for (let i = 1; i < n; i++) s += (i % 2 ? 4 : 2) * Math.pow(Math.cos(i * h), v - 1); return c * s * h / 3; };
+  return N.brent(t => area(t) - 0.475, 1.9, 13, 1e-10);
+}
 // generic delimited-text reader: returns header cells and rows of raw string cells
 function readRows(text, minCols, minRows, label) {
   const lines = String(text ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#') && !l.startsWith('//'));
@@ -421,7 +429,7 @@ function runYield(inp) {
   if (util[bn] > 1) w.push(`The bottleneck "${S[bn].name}" is loaded to ${pct(util[bn])}: the line cannot meet the demand of ${F(inp.units, 4)} good units per year (capacity ${F(annual, 4)}).`);
   if (AD > 3) w.push(`Mean number of killer defects per unit A·D = ${F(AD, 3)}: the yield models diverge strongly here and the result is dominated by the assumed defect clustering.`);
   const As = N.logspace(Math.log10(inp.area / 100), Math.log10(inp.area * 20), 50), Ds = N.logspace(Math.log10(inp.D0 / 50), Math.log10(inp.D0 * 20), 50), mods = [['Poisson', Ym.poisson], ['Murphy', Ym.murphy], ['Seeds', Ym.seeds], [`Negative binomial (α = ${al})`, Ym.negbin]];
-  const worstY = N.argmin(S.map(s => s.y)), dTarget = Yd < 0.9 ? inp.D0 * (inp.ymodel === 'poisson' ? -Math.log(0.9) / AD : N.brent(d => (Ym[inp.ymodel] || Ym.negbin)(d * AD) - 0.9, 1e-9, 1)) : inp.D0;
+  const worstY = N.argmin(S.map(s => s.y)), x90 = inp.ymodel === 'poisson' ? -Math.log(0.9) : inp.ymodel === 'seeds' ? 1 / 0.9 - 1 : inp.ymodel === 'murphy' ? N.brent(x => Ym.murphy(x) - 0.9, 1e-6, 2) : al * (Math.pow(0.9, -1 / al) - 1), dTarget = x90 / (inp.area * inp.critFrac);   // A·D₀ at which the selected model gives Y = 0.9, converted to a defect density
   return {
     summary: `Defect-limited yield is ${pct(Yd)} (${inp.ymodel} model, ${F(AD, 3)} killer defects per unit) and the rolled throughput yield of ${S.length} steps is ${pct(rty)}, giving ${pct(yTot)} overall; ${F(starts, 4)} starts are needed for ${F(inp.units, 4)} good units per year. The takt time is ${F(takt, 3)} min; the bottleneck is "${S[bn].name}" at ${pct(util[bn])} utilisation, limiting the line to ${F(lineCap, 3)} good units/h (${F(annual, 4)} per year). OEE at the bottleneck is ${pct(oee)}; the batch campaign schedule yields ${F(campCap, 4)} good kg or units per year.`,
     kpis: [

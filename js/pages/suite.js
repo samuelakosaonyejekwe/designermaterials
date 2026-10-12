@@ -4,7 +4,9 @@ import { h, icon, toast, download, tabs, table, toCSV, parseCSV, fileBytes, debo
 import { fmt } from '../core/num.js';
 import { lineChart, heatmap, barChart, histChart } from '../core/plot.js';
 import { viewer } from '../core/view3d.js';
-import { loadSuite, loadSpec, resolveInputs, runSuite, defaultInputs } from '../core/engine.js';
+import { loadSuite, loadSpec, resolveInputs, runSuite, defaultInputs, finishRun, validateInputs, benchStatus } from '../core/engine.js';
+import { runSuiteBenchmarks, loadBenchmarks, summarise, KIND as BENCH_KIND } from '../core/benchmarks.js';
+import { kv } from '../core/store.js';
 import { project, setInputs, saveProject, onProject } from '../core/store.js';
 import { visible, oat, morris, sobol, monteCarlo, numericInputs } from '../core/sensitivity.js';
 import * as live from '../core/live.js';
@@ -52,7 +54,33 @@ export async function suitePage(root, id) {
     formBox.replaceChildren(
       h('div.formtop', preset, h('button.btn.ghost.sm', { type: 'button', title: 'Reset to defaults and re-link values published by other suites', onclick: () => { delete project.inputs[id]; saveProject(); ({ values, origin } = resolveInputs(suite)); renderForm(); } }, icon('refresh', 14), ' Reset')),
       ...[...groups].map(([g, list], k) => h('details.group', { open: k < 3 }, h('summary', g, h('span.count', list.length)), h('div.fields', list.map(field)))),
-      h('div.runbar', h('button.btn.primary', { type: 'submit' }, icon('play', 16), ' Run simulation'), h('span.muted', 'Runs on this device — works offline.')));
+      h('div.runbar', h('button.btn.primary', { type: 'submit' }, icon('play', 16), ' Run simulation'), h('span.muted', 'Runs on this device — works offline.')),
+      hifiPanel());
+  }
+  // Full-resolution background run (Web Worker): lifts the interactive grid / time-step caps.
+  const hv = {}; let worker = null;
+  function hifiPanel() {
+    const H = suite.hifi; if (!H || (H.modes && !H.modes.includes(values.mode))) return null;
+    for (const i of H.inputs) if (!(i.key in hv)) hv[i.key] = i.value;
+    const plan = h('p.hint'), prog = h('progress', { max: 1, value: 0, hidden: true }), stat = h('p.hint'), start = h('button.btn', { type: 'button' }, icon('play', 15), ' Start full-resolution run'), stop = h('button.btn.ghost.sm', { type: 'button', hidden: true }, 'Stop and keep the result so far');
+    const fmtT = s => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
+    const showPlan = async () => { try { const m = await import(`../suites/s${String(id).padStart(2, '0')}.js`); if (m.hifiPlan) { const p = m.hifiPlan({ ...values, ...hv }); plan.textContent = `${p.cells.toLocaleString()} cells × ${p.steps.toLocaleString()} steps. Estimated ${fmtT(p.estimatedSeconds)} on a typical laptop (longer on a phone), about ${Math.round(p.memoryMB)} MB of memory. The estimate is refined once the run starts.`; } } catch { plan.textContent = ''; } };
+    const busy = b => { start.hidden = b; stop.hidden = !b; prog.hidden = !b; };
+    start.onclick = () => {
+      const errs = validateInputs(suite, values); if (errs.length) { toast(errs[0], 'bad', 6000); return; }
+      if (typeof Worker === 'undefined') { toast('Background computation is not available in this browser.', 'bad'); return; }
+      worker = new Worker(new URL('../core/worker.js', import.meta.url), { type: 'module' }); busy(true); prog.value = 0; stat.textContent = 'Starting…'; const t0 = performance.now();
+      worker.onmessage = ev => { const m = ev.data;
+        if (m.type === 'progress') { prog.value = m.fraction || 0; stat.textContent = `Step ${m.step?.toLocaleString() ?? '—'} of ${m.steps?.toLocaleString() ?? '—'} · simulated ${fmt(m.simTime, 4)} s · about ${fmtT(m.etaSeconds ?? 0)} left` + (m.maxT ? ` · T max ${fmt(m.maxT, 4)} K` : '') + (m.meanLength ? ` · mean length ${fmt(m.meanLength * 1e9, 4)} nm` : ''); }
+        else if (m.type === 'done') { busy(false); worker.terminate(); worker = null; last = finishRun(suite, id, values, m.result, m.runtime, { origin: { ...origin } }); renderResults(last); stat.textContent = `Full-resolution run finished in ${fmtT((performance.now() - t0) / 1000)}. Results are shown on the right.`; toast('Full-resolution run finished', 'ok', 6000); }
+        else if (m.type === 'error') { busy(false); worker.terminate(); worker = null; stat.textContent = 'The run stopped: ' + m.message; toast(m.message, 'bad', 8000); } };
+      worker.onerror = ev => { busy(false); stat.textContent = 'The background solver could not start: ' + (ev.message || 'unknown error'); };
+      worker.postMessage({ type: 'run', id, inputs: { ...values }, hifi: { ...hv }, bus: Object.fromEntries(Object.entries(project.bus).map(([k, v]) => [k, v.value])) });
+    };
+    stop.onclick = () => { if (worker) { worker.postMessage({ type: 'cancel' }); stat.textContent = 'Stopping at the next time step…'; } };
+    showPlan();
+    return h('details.group.hifi', h('summary', icon('layers', 15), ' ', H.label), h('p.help', 'Runs the simulation at the full specified resolution in the background on this device. You can keep using the app while it computes; keep this page open until it finishes.'),
+      h('div.fields', H.inputs.map(i => h('div.field', h('label', i.label), h('div.numrow', h('input', { type: 'number', value: hv[i.key], min: i.min, max: i.max, step: 'any', oninput: e => { hv[i.key] = Math.min(i.max, Math.max(i.min, +e.target.value || i.value)); showPlan(); } }), i.unit ? h('span.unit', i.unit) : null)))), plan, h('div.runbar', start, stop, prog), stat);
   }
   async function run() {
     if (state.running) return; state.running = true; resBox.classList.add('busy'); if (!resBox.children.length) resBox.replaceChildren(h('div.card', h('p.muted', 'Solving…')));
@@ -120,7 +148,14 @@ export async function suitePage(root, id) {
   const modelsTab = () => h('div', h('div.card', h('h3', 'Governing equations and mathematical formulations'), chips(s.eq.formulations)), h('div.card', h('h3', 'Classical and contemporary models'), chips(s.eq.models)), h('div.card', h('h3', 'Hybrid and computational methods'), chips(s.eq.hybrid)), h('div.card', h('h3', 'Engineering outputs'), chips(s.eq.outputs)), s.capabilities ? h('div.card', h('h3', 'Core capabilities'), h('ol.caps', s.capabilities.map(c => h('li', h('b', c.name + ': '), c.text)))) : null, h('div.card.note', icon('info', 16), h('p', 'Only the models physically relevant to the selected analysis are activated in a run; the equations actually solved are listed with every result. Reduced-order models implemented in-browser are named explicitly, and input decks can be exported for high-fidelity external solvers where offered.')));
   const condTab = () => h('div', h('div.card', h('h3', 'Initial conditions'), h('p', s.ibc.ic)), h('div.card', h('h3', s.ibc.bcLabel || 'Boundary conditions'), h('p', s.ibc.bc)), s.ibc.note ? h('div.card.note', icon('info', 16), h('p', s.ibc.note)) : null, h('div.card', h('h3', 'Boundary-condition classes available platform-wide'), table(['Class', 'Typical application'], spec.cross.bcClasses.map(b => [b.cls, b.use]))));
   const numTab = () => h('div', h('div.card', h('h3', 'Numerical settings that matter most for this suite'), h('p', s.num + '.')), h('div.card', h('h3', 'Configuration levels'), table(['Mode', 'How it operates'], spec.cross.numModes.map(m => [m.mode, m.text]))), h('div.card', h('h3', 'Numerical parameter groups'), spec.cross.numGroups.map(g => h('details', h('summary', `${g.id}. ${g.title}`, h('span.muted', '  ' + g.part)), g.text.map(t => h('p', t))))));
-  const cvvTab = () => h('div', last ? h('div.card', h('h3', 'Qualification gates for the current run'), h('ul.gates', last.credibility.gates.map(g => h('li.' + g.status, h('span.gs', { pass: 'Passed', partial: 'Partly evidenced', open: 'Open', fail: 'Failed' }[g.status]), h('b', `Gate ${g.id} — ${g.name}`), h('p', g.detail)))), h('p', h('b', 'Evidence status: '), last.credibility.level), h('a.btn.sm', { href: '#/suite/24' }, 'Open Suite 24 to add verification, calibration and validation evidence')) : h('div.card', h('p.muted', 'Run the simulation to see its qualification gates.')),
+  function benchCard() {
+    const box = h('div', h('p.muted', 'Loading reference benchmarks…')), prog = h('progress', { max: 1, value: 0, hidden: true });
+    const show = res => { const sm = summarise(res); benchStatus[id] = sm; kv.set('bench:' + id, { ...sm, at: Date.now() }); box.replaceChildren(h('p', h('b', `${sm.passed} of ${sm.total} benchmarks reproduced`), ` on this device; worst relative deviation ${(sm.worst * 100).toFixed(2)} %.`), table(['Benchmark', 'Type', 'Reference value', 'This solver', 'Deviation', 'Allowed', 'Result', 'Source'], res.map(r => [h('span', { title: r.note || '' }, r.title), BENCH_KIND[r.kind] || r.kind, r.expected, r.error ? 'error' : r.got, r.relative ? `${(r.dev * 100).toFixed(2)} %` : fmt(r.dev, 3), r.abs !== undefined ? `± ${r.abs}` : `${(r.tol * 100).toFixed(1)} %`, h('span.tag', { class: r.ok ? 'sup-full' : 'sup-inventory' }, r.ok ? 'pass' : 'differs'), r.reference])), h('p.hint', 'Each reference value comes from an exact solution, handbook data or a published benchmark and is independent of this software. Agreement shows the solver reproduces established results for those cases; your own case still needs comparison with your own measurements (Suite 24).')); };
+    const go = async () => { prog.hidden = false; const res = await runSuiteBenchmarks(id, p => prog.value = p); prog.hidden = true; show(res); };
+    loadBenchmarks(id).then(list => { if (!list.length) { box.replaceChildren(h('p.muted', 'No reference benchmarks are packaged for this suite yet.')); return; } box.replaceChildren(h('p', `${list.length} independent reference results are packaged for this suite.`)); go(); });
+    return h('div.card', h('div.row.between.wrap', h('h3', 'Reference benchmarks'), h('button.btn.sm', { onclick: go }, icon('refresh', 14), ' Run again')), prog, box);
+  }
+  const cvvTab = () => h('div', benchCard(), last ? h('div.card', h('h3', 'Qualification gates for the current run'), h('ul.gates', last.credibility.gates.map(g => h('li.' + g.status, h('span.gs', { pass: 'Passed', partial: 'Partly evidenced', open: 'Open', fail: 'Failed' }[g.status]), h('b', `Gate ${g.id} — ${g.name}`), h('p', g.detail)))), h('p', h('b', 'Evidence status: '), last.credibility.level), h('a.btn.sm', { href: '#/suite/24' }, 'Open Suite 24 to add verification, calibration and validation evidence')) : h('div.card', h('p.muted', 'Run the simulation to see its qualification gates.')),
     h('div.card', h('h3', 'Calibration'), h('p', s.cvv.cal)), h('div.card', h('h3', 'Verification'), h('p', s.cvv.ver)), h('div.card', h('h3', 'Validation'), h('p', s.cvv.val)), h('div.card', h('h3', 'Expected evidence'), h('p', s.cvv.exp)), s.cvv.note ? h('div.card.note', icon('info', 16), h('p', s.cvv.note)) : null);
   const ioTab = () => h('div.two', h('div', h('h3', 'Accepted input data'), s.io.inputs.map(g => h('div.card', h('h4', g.group), h('ul.cols', g.items.map(x => h('li', x))))), h('a.btn.sm', { href: '#/data' }, icon('upload', 14), ' Open the data portal to import case data')), h('div', h('h3', 'Generated output data'), s.io.outputs.map(g => h('div.card', h('h4', g.group), h('ul.cols', g.items.map(x => h('li', x)))))));
   function liveTab() {
