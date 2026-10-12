@@ -1318,6 +1318,7 @@ export function parseTIFF(input, { threshold } = {}) {
   const list = t => { if (!t) return []; if (t.cnt > 4e6 || t.at + t.cnt * (TS[t.type] || 1) > b.length) fail('TIFF', 'a strip / tile table points outside the file (truncated or corrupt)'); return Array.from({ length: t.cnt }, (_, i) => val(t, i)); };
   const T0 = pages[0], W = val(T0[256]), H = val(T0[257]); if (!(W > 0 && H > 0)) fail('TIFF', 'ImageWidth/ImageLength missing');
   const same = pages.filter(t => val(t[256]) === W && val(t[257]) === H && !(val(t[254]) & 1)), nz = same.length; if (W * H * nz > 6e7) fail('TIFF', `stack of ${W} × ${H} × ${nz} voxels is too large for in-browser import: crop or bin the volume first`);
+  if (W * H * nz * (val(T0[258]) || 1) * (val(T0[277]) || 1) / 8 > b.length * ((val(T0[259]) || 1) === 1 ? 1 : 1040)) fail('TIFF', `the directory declares ${W} × ${H} × ${nz} pixels, more than a ${b.length}-byte file can hold (corrupt header)`);
   const vol = new Float32Array(W * H * nz), notes = [], lost = []; let info = null;
   same.forEach((t, k) => {
     const bps = val(t[258]) || 1, comp = val(t[259]) || 1, photo = val(t[262]) ?? 1, spp = val(t[277]) || 1, sf = val(t[339]) || 1, pred = val(t[317]) || 1, planar = val(t[284]) || 1;

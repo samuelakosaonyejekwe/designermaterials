@@ -1,1 +1,4 @@
-{"mirrors":[{"url":"./","host":"this address"}]}
+{"mirrors":[
+{"url":"https://samuelakosaonyejekwe.github.io/designermaterials/","host":"GitHub Pages (primary)"},
+{"url":"https://raw.githack.com/samuelakosaonyejekwe/designermaterials/main/index.html","host":"raw.githack CDN (served from its own cache of the repository)"}
+]}

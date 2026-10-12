@@ -876,7 +876,8 @@ export default {
     { name: 'Auxetic re-entrant lattice coupon — tensile test', note: 'Polymer re-entrant honeycomb with transverse strain: effective modulus, proof stress and a negative Poisson’s ratio.', values: { mode: 'tensile', tens_table: TENS_AUX } },
     { name: 'Fused-silica reference — Oliver–Pharr nanoindentation', note: 'Standard calibration material: modulus near 72 GPa and hardness near 9 GPa from the unloading curve.', values: { mode: 'op', op_nu: 0.17 } },
     { name: 'ZnO nanorod film — Raman modes', note: 'E2(high) band of wurtzite ZnO near 437 cm⁻¹ with weaker defect-related bands; shows the ZnO/rutile assignment ambiguity.', values: { mode: 'raman', raman_table: RAMAN_ZNO } },
-    { name: 'Au nanoparticles — DLS and counted diameters', note: 'Cumulant analysis of a 24 nm gold sol; compare with the counted-diameter mode using the gold TEM table.', values: { mode: 'dls', dls_table: DLS_AU } },
+    { name: 'Au nanoparticles — DLS z-average', note: 'Cumulant analysis of a 24 nm gold sol (hydrodynamic, intensity-weighted size).', values: { mode: 'dls', dls_table: DLS_AU } },
+    { name: 'Au nanoparticles — counted TEM diameters', note: 'Number statistics of 150 counted gold particles: means, log-normal fit and the count needed for a target precision.', values: { mode: 'counts', tem_table: TEM_AU } },
   ],
   run(inp) {
     const o = makeOut(), mode = MODES[inp.mode] ? inp.mode : 'xrd';

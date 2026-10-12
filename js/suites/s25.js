@@ -595,6 +595,16 @@ function runRecipe(inp) {
 // =====================================================================================================
 // 6. Topology optimisation: 2-D SIMP minimum compliance with sensitivity filter and optimality criteria
 // =====================================================================================================
+// Banded Cholesky (lower band stored row-wise, diagonal in the last column) and the two triangular solves
+function bandChol(B, nd, hb) {
+  nd = nd | 0; hb = hb | 0; const w = (hb + 1) | 0;
+  for (let i = 0; i < nd; i = (i + 1) | 0) { const j0 = (i - hb > 0 ? i - hb : 0) | 0, pi = (Math.imul(i, w) + hb - i) | 0; for (let j = j0; j <= i; j = (j + 1) | 0) { const pj = (Math.imul(j, w) + hb - j) | 0; let s = B[(pi + j) | 0]; for (let a = (pi + j0) | 0, b = (pj + j0) | 0, e = (pi + j) | 0; a < e; a = (a + 1) | 0, b = (b + 1) | 0) s -= B[a] * B[b]; if (i === j) B[(pi + i) | 0] = Math.sqrt(s > 1e-30 ? s : 1e-30); else B[(pi + j) | 0] = s / B[(pj + j) | 0]; } }
+}
+function bandSolve(B, nd, hb, u, Fv, fixed) {
+  const w = hb + 1;
+  for (let i = 0; i < nd; i++) { let s = fixed[i] ? 0 : Fv[i]; const j0 = i - hb > 0 ? i - hb : 0, pi = i * w + hb - i; for (let j = j0; j < i; j++) s -= B[pi + j] * u[j]; u[i] = s / B[pi + i]; }
+  for (let i = nd - 1; i >= 0; i--) { let s = u[i]; const j1 = i + hb < nd - 1 ? i + hb : nd - 1; for (let j = i + 1; j <= j1; j++) s -= B[j * w + hb - j + i] * u[j]; u[i] = s / B[i * w + hb]; }
+}
 function simp(nelx, nely, vf, penal, rmin, maxIt, prob) {
   const nu = 0.3, k = [1 / 2 - nu / 6, 1 / 8 + nu / 8, -1 / 4 - nu / 12, -1 / 8 + 3 * nu / 8, -1 / 4 + nu / 12, -1 / 8 - nu / 8, nu / 6, 1 / 8 - 3 * nu / 8], ix = [[0, 1, 2, 3, 4, 5, 6, 7], [1, 0, 7, 6, 5, 4, 3, 2], [2, 7, 0, 5, 6, 3, 4, 1], [3, 6, 5, 0, 7, 2, 1, 4], [4, 5, 6, 7, 0, 1, 2, 3], [5, 4, 3, 2, 1, 0, 7, 6], [6, 3, 4, 1, 2, 7, 0, 5], [7, 2, 1, 4, 3, 6, 5, 0]];
   const KE = new Float64Array(64); for (let a = 0; a < 8; a++) for (let b = 0; b < 8; b++) KE[a * 8 + b] = k[ix[a][b]] / (1 - nu * nu);
@@ -609,9 +619,7 @@ function simp(nelx, nely, vf, penal, rmin, maxIt, prob) {
     B.fill(0);
     for (let e = 0; e < ne; e++) { const Ee = Math.pow(x[e], penal), o = e * 8; for (let a = 0; a < 8; a++) { const i = ed[o + a]; for (let b = 0; b < 8; b++) { const j = ed[o + b]; if (j <= i) B[i * w + hb + j - i] += Ee * KE[a * 8 + b]; } } }
     for (let i = 0; i < nd; i++) if (fixed[i]) { for (let d = 0; d <= hb; d++) { B[i * w + d] = 0; const r2 = i + d; if (d > 0 && r2 < nd) B[r2 * w + hb - d] = 0; } B[i * w + hb] = 1; }
-    for (let i = 0; i < nd; i++) { const j0 = i - hb > 0 ? i - hb : 0, pi = i * w + hb - i; for (let j = j0; j <= i; j++) { const pj = j * w + hb - j; let s = B[pi + j], q = j0; for (; q + 3 < j; q += 4) s -= B[pi + q] * B[pj + q] + B[pi + q + 1] * B[pj + q + 1] + B[pi + q + 2] * B[pj + q + 2] + B[pi + q + 3] * B[pj + q + 3]; for (; q < j; q++) s -= B[pi + q] * B[pj + q]; if (i === j) B[pi + i] = Math.sqrt(s > 1e-30 ? s : 1e-30); else B[pi + j] = s / B[pj + j]; } }
-    for (let i = 0; i < nd; i++) { let s = fixed[i] ? 0 : Fv[i]; const j0 = i - hb > 0 ? i - hb : 0, pi = i * w + hb - i; for (let j = j0; j < i; j++) s -= B[pi + j] * u[j]; u[i] = s / B[pi + i]; }
-    for (let i = nd - 1; i >= 0; i--) { let s = u[i]; const j1 = i + hb < nd - 1 ? i + hb : nd - 1; for (let j = i + 1; j <= j1; j++) s -= B[j * w + hb - j + i] * u[j]; u[i] = s / B[i * w + hb]; }
+    bandChol(B, nd, hb); bandSolve(B, nd, hb, u, Fv, fixed);
     c = 0; for (let e = 0; e < ne; e++) { let s = 0; const o = e * 8; for (let a = 0; a < 8; a++) { let t = 0; for (let b = 0; b < 8; b++) t += KE[a * 8 + b] * u[ed[o + b]]; s += u[ed[o + a]] * t; } ce[e] = s; c += Math.pow(x[e], penal) * s; dc[e] = -penal * Math.pow(x[e], penal - 1) * s; }
     fu = -u[loadDof];
     for (let i = 0; i < nelx; i++) for (let j = 0; j < nely; j++) { let sum = 0, acc = 0; for (let a = Math.max(i - rr, 0); a <= Math.min(i + rr, nelx - 1); a++) for (let b = Math.max(j - rr, 0); b <= Math.min(j + rr, nely - 1); b++) { const fac = rmin - Math.hypot(i - a, j - b); if (fac > 0) { sum += fac; acc += fac * x[a * nely + b] * dc[a * nely + b]; } } dcf[i * nely + j] = acc / (x[i * nely + j] * sum); }
@@ -624,7 +632,7 @@ function simp(nelx, nely, vf, penal, rmin, maxIt, prob) {
 }
 function runTopo(inp) {
   const W = []; let nelx = Math.round(inp.nelx), nely = Math.round(inp.nely), maxIt = Math.round(inp.tIter);
-  const work = (nelx + 1) * (nely + 1) * (2 * nely + 5) ** 2 * maxIt; if (work > 2.5e8) { const m2 = Math.max(5, Math.floor(maxIt * 2.5e8 / work)); W.push(`Iterations reduced from ${maxIt} to ${m2} to keep the run time of this ${nelx} × ${nely} grid within the interactive limit.`); maxIt = m2; }
+  const work = (nelx + 1) * (nely + 1) * (2 * nely + 5) ** 2 * maxIt; if (work > 2e8) { const m2 = Math.max(5, Math.floor(maxIt * 2e8 / work)); W.push(`Iterations reduced from ${maxIt} to ${m2} to keep the run time of this ${nelx} × ${nely} grid within the interactive limit.`); maxIt = m2; }
   const vf = inp.volfrac, pen = inp.penal, rmin = inp.rminF, s = simp(nelx, nely, vf, pen, rmin, maxIt, inp.tProb), x = s.x, ne = nelx * nely, vol = N.sum(x) / ne, grey = 100 * N.sum(Array.from(x, v => 4 * v * (1 - v))) / ne;
   const map = new Float64Array(ne), vox = new Uint8Array(ne); for (let i = 0; i < nelx; i++) for (let j = 0; j < nely; j++) { const v = x[i * nely + j], k2 = (nely - 1 - j) * nelx + i; map[k2] = v; vox[k2] = v > 0.5 ? 1 : 0; }
   const conv = s.change <= 0.01, eBal = Math.abs(s.c - s.fu) / Math.max(s.c, 1e-300), cFull = s.hist[0] * Math.pow(vf, pen), el = inp.elSize, defl = s.c * inp.tLoad / (inp.tE * inp.tThk * 1e-3), solid = N.sum(Array.from(vox)) / ne, minFeat = 2 * rmin * el;

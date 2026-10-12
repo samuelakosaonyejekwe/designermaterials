@@ -41,12 +41,13 @@ const installBtn = h('button.btn.sm.primary', { hidden: true, onclick: install, 
 let reg = null, swState = 'Offline support is starting…';
 async function initSW() {
   if (!('serviceWorker' in navigator)) { swState = 'This browser does not support offline installation; the app still works online.'; return; }
+  const hadController = !!navigator.serviceWorker.controller;
   try {
     reg = await navigator.serviceWorker.register('sw.js'); swState = 'Offline support is active on this device.';
     const offer = w => { const b = h('div#update', h('button.btn.primary.sm', { onclick: () => { w.postMessage('skipWaiting'); } }, icon('refresh', 14), ' Update available — reload')); document.body.append(b); };
     if (reg.waiting && navigator.serviceWorker.controller) offer(reg.waiting);
     reg.addEventListener('updatefound', () => { const w = reg.installing; w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) offer(w); }); });
-    let reloaded = false; navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloaded) { reloaded = true; location.reload(); } });
+    let reloaded = false; navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
     setInterval(() => reg.update().catch(() => { }), 30 * 60e3); addEventListener('online', () => reg.update().catch(() => { }));
     try { if ('periodicSync' in reg) { const st = await navigator.permissions.query({ name: 'periodic-background-sync' }); if (st.state === 'granted') await reg.periodicSync.register('refresh-live', { minInterval: 6 * 3600e3 }); } } catch { /* optional capability */ }
   } catch (e) { swState = 'Offline support could not start: ' + e.message; }
@@ -71,7 +72,7 @@ const syncNet = () => { const on = navigator.onLine !== false; net.textContent =
 function shell(spec) {
   top.replaceChildren(h('button.iconbtn', { 'aria-label': 'Menu', id: 'menuBtn', onclick: () => side.classList.toggle('open') }, icon('menu', 18)), h('a.brand', { href: '#/' }, h('img', { src: 'icons/icon.svg', alt: '', width: 28, height: 28 }), h('span', 'Designer Materials')), h('div.navpair', { role: 'group', 'aria-label': 'History' }, backBtn, fwdBtn), h('div.grow'), net, installBtn,
     h('button.iconbtn', { 'aria-label': 'Switch light / dark', title: 'Switch light / dark', onclick: () => { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); prefs.set('theme', cur === 'dark' ? 'light' : 'dark'); applyTheme(); route(true); } }, icon('sun', 18)));
-  side.replaceChildren(...NAV.map(([href, ic, label]) => h('a', { href, 'data-nav': href }, icon(ic, 18), label)), h('div.sep', 'Suites'), ...spec.suites.map(s => h('a.mini', { href: `#/suite/${s.id}`, 'data-nav': `#/suite/${s.id}`, title: s.resp }, h('span', s.id), s.name)));
+  side.replaceChildren(...NAV.map(([href, ic, label]) => h('a', { href, 'data-nav': href }, icon(ic, 18), label)), h('div.sep', '29 engineering suites'), ...spec.groups.map((g, k) => h('div.sgroup', { class: 'g' + (k + 1) }, h('div.sghead', h('i'), g.name), g.suites.map(i => spec.suites[i - 1]).map(s => h('a.mini', { href: `#/suite/${s.id}`, 'data-nav': `#/suite/${s.id}`, title: s.resp }, h('span.sn', String(s.id).padStart(2, '0')), h('span.st', s.name))))));
   bottom.replaceChildren(...[NAV[0], NAV[1], NAV[2], NAV[3], NAV[5]].map(([href, ic, label]) => h('a', { href, 'data-nav': href }, icon(ic, 20), label.split(' ')[0])));
   if (matchMedia('(min-width: 901px)').matches) document.getElementById('menuBtn').hidden = true;
   syncNet(); addEventListener('online', syncNet); addEventListener('offline', syncNet);

@@ -39,24 +39,35 @@ const fccDef = (el, a) => ({ name: `${el} fcc`, formula: el, system: 'cubic', a,
 const potLine = pt => pt.type === 'lj' ? `φ(r) = 4ε[(σ/r)¹² − (σ/r)⁶],  ε = ${F(pt.e, 4)} eV, σ = ${F(pt.r, 4)} Å` : `φ(r) = D[e^(−2α(r − r₀)) − 2e^(−α(r − r₀))],  D = ${F(pt.e, 4)} eV, α = ${F(pt.al, 5)} Å⁻¹, r₀ = ${F(pt.r, 4)} Å`;
 
 // Pair forces over a neighbour list (shifted-force truncation). L > 0 selects the cubic minimum-image convention.
-// acc[0] = potential energy, acc[1] = virial Σ r·F. Kept as a plain top-level function over typed arrays for speed.
-function mdForces(lst, x, y, z, fx, fy, fz, L, rc, lj, E, p1, r0, phiC, dC, acc) {
-  const n = lst.length, rc2 = rc * rc, iL = L > 0 ? 1 / L : 0; let ep = 0, vir = 0; acc[0] = 0; acc[1] = 0; fx.fill(0); fy.fill(0); fz.fill(0);
-  for (let q = 0; q < n; q += 2) {
+// Returns the potential energy; the virial Σ r·F is accumulated in acc[0] inside the loop (no property access after the
+// hot loop, which keeps the JIT-compiled loop entry valid on every call).
+function mdForces(lst, cnt, x, y, z, fx, fy, fz, L, rc, lj, E, p1, r0, phiC, dC, acc) {
+  const rc2 = rc * rc, iL = 1 / L, per = L < 1e29; let ep = 0; fx.fill(0); fy.fill(0); fz.fill(0); acc[0] = 0;
+  for (let q = 0; q < cnt; q += 2) {
     const i = lst[q], j = lst[q + 1]; let dx = x[i] - x[j], dy = y[i] - y[j], dz = z[i] - z[j];
-    if (L > 0) { dx -= L * Math.floor(dx * iL + 0.5); dy -= L * Math.floor(dy * iL + 0.5); dz -= L * Math.floor(dz * iL + 0.5); }
-    const r2 = dx * dx + dy * dy + dz * dz; if (r2 >= rc2) continue;
-    const r = Math.sqrt(r2); let phi = 0, dphi = 0;
-    if (lj) { const s2 = p1 / r2, s6 = s2 * s2 * s2; phi = 4 * E * (s6 * s6 - s6); dphi = -24 * E * (2 * s6 * s6 - s6) / r; } else { const u = Math.exp(-p1 * (r - r0)); phi = E * (u * u - 2 * u); dphi = -2 * p1 * E * (u * u - u); }
-    ep += phi - phiC - (r - rc) * dC; const fr = (dC - dphi) / r; vir += fr * r2;
-    fx[i] += fr * dx; fy[i] += fr * dy; fz[i] += fr * dz; fx[j] -= fr * dx; fy[j] -= fr * dy; fz[j] -= fr * dz;
+    if (per) { dx -= L * Math.floor(dx * iL + 0.5); dy -= L * Math.floor(dy * iL + 0.5); dz -= L * Math.floor(dz * iL + 0.5); }
+    const r2 = dx * dx + dy * dy + dz * dz;
+    if (r2 < rc2) {
+      const r = Math.sqrt(r2); let phi = 0.5, dphi = 0.5;
+      if (lj) { const s2 = p1 / r2, s6 = s2 * s2 * s2; phi = 4 * E * (s6 * s6 - s6); dphi = -24 * E * (2 * s6 * s6 - s6) / r; } else { const u = Math.exp(-p1 * (r - r0)); phi = E * (u * u - 2 * u); dphi = -2 * p1 * E * (u * u - u); }
+      ep += phi - phiC - (r - rc) * dC; const fr = (dC - dphi) / r; acc[0] += fr * r2;
+      fx[i] += fr * dx; fy[i] += fr * dy; fz[i] += fr * dz; fx[j] -= fr * dx; fy[j] -= fr * dy; fz[j] -= fr * dz;
+    }
   }
-  acc[0] = ep; acc[1] = vir;
+  return ep;
 }
-function mdList(x, y, z, n, L, rl2) {
-  const tmp = [], iL = L > 0 ? 1 / L : 0;
-  for (let i = 0; i < n - 1; i++) { const xi = x[i], yi = y[i], zi = z[i]; for (let j = i + 1; j < n; j++) { let dx = xi - x[j], dy = yi - y[j], dz = zi - z[j]; if (L > 0) { dx -= L * Math.floor(dx * iL + 0.5); dy -= L * Math.floor(dy * iL + 0.5); dz -= L * Math.floor(dz * iL + 0.5); } if (dx * dx + dy * dy + dz * dz < rl2) tmp.push(i, j); } }
-  return Int32Array.from(tmp);
+// Verlet list into a pre-allocated buffer; returns the number of entries used, or −1 if the buffer is too small.
+function mdList(buf, x, y, z, n, L, rl2) {
+  const iL = 1 / L, per = L < 1e29, cap = buf.length - 2; let c = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const xi = x[i], yi = y[i], zi = z[i];
+    for (let j = i + 1; j < n; j++) {
+      let dx = xi - x[j], dy = yi - y[j], dz = zi - z[j];
+      if (per) { dx -= L * Math.floor(dx * iL + 0.5); dy -= L * Math.floor(dy * iL + 0.5); dz -= L * Math.floor(dz * iL + 0.5); }
+      if (dx * dx + dy * dy + dz * dz < rl2) { if (c > cap) return -1; buf[c] = i; buf[c + 1] = j; c += 2; }
+    }
+  }
+  return c;
 }
 
 // ───────────────────────────── mode 1: molecular dynamics ─────────────────────────────
@@ -89,10 +100,10 @@ function runMD(inp) {
   const kin = () => { let k = 0; for (let i = 0; i < n; i++) k += vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i]; return 0.5 * m * k; };
   { const s = Math.sqrt(T / Math.max(2 * kin() / (dof * KB), 1e-12)); for (let i = 0; i < n; i++) { vx[i] *= s; vy[i] *= s; vz[i] *= s; } }
   // neighbour list
-  let list = new Int32Array(0), rebuilds = 0; const x0 = new Float64Array(n), y0 = new Float64Array(n), z0 = new Float64Array(n);
-  const build = () => { list = mdList(x, y, z, n, pbc ? L : 0, rl2); x0.set(x); y0.set(y); z0.set(z); rebuilds++; };
+  let list = new Int32Array(Math.min(n * (n - 1), Math.max(256, Math.ceil(3 * pairsEst) * 2)) + 4), nl = 0, rebuilds = 0; const x0 = new Float64Array(n), y0 = new Float64Array(n), z0 = new Float64Array(n);
+  const build = () => { nl = mdList(list, x, y, z, n, Lbox, rl2); if (nl < 0) { list = new Int32Array(n * (n - 1) + 4); nl = mdList(list, x, y, z, n, Lbox, rl2); } x0.set(x); y0.set(y); z0.set(z); rebuilds++; };
   const stale = () => { const lim = (skin / 2) ** 2; for (let i = 0; i < n; i++) { const dx = x[i] - x0[i], dy = y[i] - y0[i], dz = z[i] - z0[i]; if (dx * dx + dy * dy + dz * dz > lim) return true; } return false; };
-  const acc = new Float64Array(2), forces = () => mdForces(list, x, y, z, fx, fy, fz, pbc ? L : 0, rc, lj, pt.e, lj ? pt.r * pt.r : pt.al, pt.r, phiC, dC, acc);
+  const acc = new Float64Array(1), Lbox = pbc ? L : 1e30, p1 = lj ? pt.r * pt.r : pt.al; let epot = 0; const forces = () => { epot = mdForces(list, nl, x, y, z, fx, fy, fz, Lbox, rc, lj, pt.e, p1, pt.r, phiC, dC, acc); };
   build(); forces();
   const total = nEq + nProd, nS = Math.min(200, nProd), sEvery = Math.max(1, Math.floor(nProd / nS)), tS = [], TS = [], EtS = [], EpS = [], PS = [], msdS = [];
   const xs = new Float64Array(n), ys = new Float64Array(n), zs = new Float64Array(n);
@@ -111,7 +122,7 @@ function runMD(inp) {
     else if (ens === 'langevin') { for (let i = 0; i < n; i++) { vx[i] = cL * vx[i] + sL * rand.normal(); vy[i] = cL * vy[i] + sL * rand.normal(); vz[i] = cL * vz[i] + sL * rand.normal(); } ke = kin(); Ti = 2 * ke / (dof * KB); }
     if (s === nEq - 1) { xs.set(x); ys.set(y); zs.set(z); }
     if (!prod) continue;
-    const k = s - nEq, ep = acc[0], P = pbc ? (n * KB * Ti + acc[1] / 3) / V * EVA3_GPA : 0; Tsum += Ti; Psum += P; nAvg++; if (Ti > maxT) maxT = Ti;
+    const k = s - nEq, ep = epot, P = pbc ? (n * KB * Ti + acc[0] / 3) / V * EVA3_GPA : 0; Tsum += Ti; Psum += P; nAvg++; if (Ti > maxT) maxT = Ti;
     if (k % sEvery === 0) {
       let cx = 0, cy = 0, cz = 0; for (let i = 0; i < n; i++) { cx += x[i] - xs[i]; cy += y[i] - ys[i]; cz += z[i] - zs[i]; } cx /= n; cy /= n; cz /= n;
       let ms = 0; for (let i = 0; i < n; i++) ms += (x[i] - xs[i] - cx) ** 2 + (y[i] - ys[i] - cy) ** 2 + (z[i] - zs[i] - cz) ** 2;

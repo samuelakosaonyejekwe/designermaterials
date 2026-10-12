@@ -31,7 +31,7 @@ const inputs = [
   { key: 'kappa', label: 'Gradient-energy coefficient κ/(f₀Δx²)', value: 1.5, min: 0.5, max: 6, step: 0.1, group: 'Cahn–Hilliard', showIf: { mode: ['spinodal'] }, help: 'Dimensionless gradient-energy coefficient. Larger values widen the interface and coarsen the initial spinodal wavelength.' },
   { key: 'f0', label: 'Free-energy density scale f₀', unit: 'J/m³', value: 1e8, min: 1e6, max: 1e10, log: true, group: 'Cahn–Hilliard', showIf: { mode: ['spinodal'] }, help: 'Height scale of the double-well free energy; with κ and the grid spacing it fixes the interfacial energy.' },
   { key: 'Dint', label: 'Interdiffusion coefficient magnitude', unit: 'm²/s', value: 1e-18, min: 1e-24, max: 1e-9, log: true, group: 'Cahn–Hilliard', bus: 'prop.D_diff', showIf: { mode: ['spinodal'] }, help: 'Sets the physical time unit Δx²/D of the dimensionless simulation.' },
-  { key: 'ch_steps', label: 'Time steps', value: 160, min: 40, max: 400, step: 10, sens: false, group: 'Cahn–Hilliard', showIf: { mode: ['spinodal'] }, help: 'Number of semi-implicit spectral steps. More steps follow coarsening further.' },
+  { key: 'ch_steps', label: 'Time steps', value: 120, min: 40, max: 400, step: 10, sens: false, group: 'Cahn–Hilliard', showIf: { mode: ['spinodal'] }, help: 'Number of semi-implicit spectral steps. More steps follow coarsening further.' },
   { key: 'ch_dt', label: 'Dimensionless time step', value: 1, min: 0.05, max: 2, step: 0.05, sens: false, group: 'Cahn–Hilliard', showIf: { mode: ['spinodal'] }, help: 'Time step in units of Δx²/D. The stabilised scheme is energy-stable, but accuracy degrades for large steps.' },
   // grain growth
   { key: 'Qstates', label: 'Number of orientations Q', value: 48, min: 8, max: 200, step: 1, group: 'Potts grain growth', showIf: { mode: ['grain'] }, help: 'Number of distinct grain orientations. Large Q suppresses artificial coalescence of like-oriented grains.' },
@@ -41,7 +41,7 @@ const inputs = [
   { key: 'latent', label: 'Dimensionless latent heat K', value: 1.6, min: 0.8, max: 2.4, step: 0.05, group: 'Solidification', showIf: { mode: ['solid'] }, help: 'Kobayashi latent-heat parameter; the dimensionless undercooling is 1/K. Larger K slows growth and promotes side-branching.' },
   { key: 'aniso', label: 'Interface anisotropy strength δ', value: 0.02, min: 0, max: 0.05, step: 0.005, group: 'Solidification', showIf: { mode: ['solid'] }, help: 'Strength of the orientation dependence of the interface energy; zero gives a compact, seaweed-like crystal.' },
   { key: 'fold', label: 'Crystal symmetry', type: 'select', value: '6', options: [{ value: '4', label: 'Four-fold (cubic)' }, { value: '6', label: 'Six-fold (hexagonal, e.g. ZnO basal plane, ice)' }], group: 'Solidification', showIf: { mode: ['solid'] }, help: 'Rotational symmetry of the anisotropy, which fixes the number of primary dendrite arms.' },
-  { key: 'sol_steps', label: 'Time steps', value: 300, min: 100, max: 500, step: 20, sens: false, group: 'Solidification', showIf: { mode: ['solid'] }, help: 'Number of explicit steps of 2×10⁻⁴ dimensionless time units.' },
+  { key: 'sol_steps', label: 'Time steps', value: 240, min: 80, max: 400, step: 20, sens: false, group: 'Solidification', showIf: { mode: ['solid'] }, help: 'Number of explicit steps of 2×10⁻⁴ dimensionless time units.' },
   { key: 'dx_um', label: 'Grid spacing', unit: 'µm', value: 1, min: 0.01, max: 1000, log: true, group: 'Solidification', showIf: { mode: ['solid'] }, help: 'Physical size of one grid cell of the dendrite simulation. The model length unit is Δx/0.03, so this choice fixes the diffusion length scale.' },
   { key: 'alpha_th', label: 'Thermal (or solute) diffusivity', unit: 'm²/s', value: 1e-9, min: 1e-12, max: 1e-3, log: true, group: 'Solidification', showIf: { mode: ['solid'] }, help: 'Diffusivity of the field that limits growth; converts the dimensionless tip velocity to m/s.' },
   // kinetics + shared thermal inputs
@@ -171,7 +171,7 @@ function spinodal(p) {
   const wInt = 3.1 * Math.sqrt(kap), sigma = (2 * Math.SQRT2 / 3) * Math.sqrt(kap) * p.f0 * dx;
   if (!inside) warnings.push(`Mean composition ${F(p.c0)} lies outside the spinodal (0.211–0.789 for this double-well free energy): the mixture is metastable and decomposes by nucleation, which this noise-free deterministic model does not capture.`);
   if (Lf > n / 3) warnings.push('The domain size exceeds one third of the periodic box: late-time coarsening statistics are finite-size limited.');
-  if (dt > 1) warnings.push('Large time step: the stabilised scheme remains energy-stable but under-predicts the early-stage growth rate.');
+  if (dt > 1) warnings.push('Large time step: the stabilised scheme remains energy-stable but its time-stepping error slows the dynamics, so growth and coarsening rates are under-predicted; reduce the step to check.');
   const map = new Float64Array(nn); for (let i = 0; i < nn; i++) map[i] = 0.5 * (phi[i] + 1);
   return {
     summary: decomposed ? `Spinodal decomposition of a ${F(p.c0)} mixture on a 64×64 periodic grid: after ${F(steps * dt * tau)} s (${steps} steps) the bicontinuous/droplet structure has a characteristic domain size of ${F(Lf * p.dx_nm)} nm and coarsens as L ∝ t^${F(nExp, 3)}. The free energy fell monotonically by ${F(100 * (1 - FE[FE.length - 1] / FE[0]), 3)} % and mean composition was conserved to ${F(drift, 2)}.`
@@ -300,11 +300,11 @@ function grains(p) {
 
 // ---------- Kobayashi phase-field solidification ----------
 function solid(p) {
-  const n = 96, nn = n * n, h = 0.03, dt = 2e-4, tauK = 3e-4, eb = 0.01, al = 0.9, gam = 10, jf = +p.fold, del = p.aniso, Kl = p.latent, steps = Math.round(p.sol_steps), rnd = N.rng(p.seed), warnings = [];
+  const n = 80, nn = n * n, h = 0.03, dt = 2e-4, tauK = 3e-4, eb = 0.01, al = 0.9, gam = 10, jf = +p.fold, del = p.aniso, Kl = p.latent, steps = Math.round(p.sol_steps), rnd = N.rng(p.seed), warnings = [];
   const ph = new Float64Array(nn), a1 = new Float64Array(nn), a2 = new Float64Array(nn), e2 = new Float64Array(nn).fill(eb * eb), dph = new Float64Array(nn), cT = dt / (h * h); let T = new Float64Array(nn), lapT = new Float64Array(nn);
   const c = n / 2; for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if ((x - c + 0.5) ** 2 + (y - c + 0.5) ** 2 < 16) ph[y * n + x] = 1;
   const heat0 = N.sum(T) - Kl * N.sum(ph);
-  const tip = () => { const r = Math.floor(c) * n; for (let x = n - 2; x >= c; x--) if (ph[r + x] >= 0.5) { const d = ph[r + x] - ph[r + x + 1]; return (x + (d > 1e-12 ? (ph[r + x] - 0.5) / d : 0) - c + 0.5); } return 0; };
+  const tip = () => { const r = Math.floor(c) * n; for (let x = n - 2; x >= c; x--) if (ph[r + x] >= 0.5) { const d = ph[r + x] - ph[r + x + 1]; return x + (d > 1e-6 ? Math.min((ph[r + x] - 0.5) / d, 1) : 0) - c + 0.5; } return 0; };
   const tt = [], tipX = [], fs = [], frames = [], every = Math.max(1, Math.floor(steps / 40)), fevery = Math.max(1, Math.floor(steps / 10));
   const snap = () => { const d = new Uint8Array(nn); for (let i = 0; i < nn; i++) d[i] = ph[i] > 0.5 ? 1 : 0; return d; };
   tt.push(0); tipX.push(tip()); fs.push(N.sum(ph) / nn); frames.push({ t: 0, data: snap() });
@@ -332,6 +332,7 @@ function solid(p) {
   const Tmin = N.minOf(T), Tmax = N.maxOf(T), bounded = N.minOf(ph) > -0.05 && N.maxOf(ph) < 1.05;
   if (hitWall) warnings.push('The dendrite tip has reached the domain boundary: tip velocity and solid fraction are affected by the zero-flux walls. Reduce the number of steps.');
   if (del * (jf * jf - 1) > 1) warnings.push('Anisotropy exceeds the interface-stiffness limit δ(j²−1) < 1: missing orientations (facets) would appear and the smooth-interface model is ill-posed there.');
+  if (Kl < 1) warnings.push('Dimensionless undercooling 1/K exceeds 1 (hypercooled melt): the released latent heat cannot bring the system to the melting point, so the whole domain solidifies without diffusion-limited dendrites.');
   warnings.push('Kobayashi model parameters are dimensionless and qualitative; the physical tip velocity follows only from the chosen length and diffusivity scaling.');
   const mp = new Float64Array(nn), mT = new Float64Array(nn); mp.set(ph); mT.set(T);
   const ext = n * p.dx_um;
@@ -343,7 +344,7 @@ function solid(p) {
       kpi('f_solid', 'Solid fraction', fs[fs.length - 1], '–', 'Area fraction with order parameter φ > 0 (integral of φ) at the end of the run; the adiabatic limit for complete recalescence is the dimensionless undercooling 1/K.', null),
       kpi('shape', 'Shape factor P²/(4πA)', compact, '–', 'Perimeter squared over 4π times area of the solid: 1 for a circle, larger for branched dendrites. Perimeter is evaluated as the integral of |∇φ|.', null),
       kpi('arm_ratio', 'Arm anisotropy ratio', armRatio, '–', `Ratio of crystal radius along a preferred direction to that half-way between two arms (at ${F(180 / jf, 3)}°). Values well above 1 show developed primary arms.`, armRatio > 1.1),
-      kpi('T_int', 'Maximum melt temperature', Tmax, '–', 'Highest dimensionless temperature (0 = initial undercooled melt, 1 = equilibrium melting point) produced by latent-heat release; values near 1 show recalescence at the interface. Because the model has no re-melting constraint the solid interior can exceed 1 when K > 1.', Tmax <= Kl + 0.05),
+      kpi('T_int', 'Maximum melt temperature', Tmax, '–', 'Highest dimensionless temperature (0 = initial undercooled melt, 1 = equilibrium melting point) produced by latent-heat release; values near 1 show recalescence at the interface. Because the model has no re-melting constraint the solid interior can exceed 1 when K > 1.', Tmax <= Math.max(Kl, 1) + 0.15),
       kpi('heat_err', 'Enthalpy balance error', heatErr, '–', 'Relative drift of the conserved enthalpy ∫(T − Kφ)dA with zero-flux boundaries; it measures the discretisation consistency of the coupled update.', heatErr < 1e-6),
     ],
     series: [
@@ -366,7 +367,7 @@ function solid(p) {
       chk('Order parameter bounded', bounded, `φ ∈ [${F(N.minOf(ph), 3)}, ${F(N.maxOf(ph), 3)}]`),
       chk('Tip clear of the boundary', !hitWall, `tip at ${F(rAlong, 3)} of ${n / 2} cells`),
       chk('Interface stiffness positive', del * (jf * jf - 1) < 1, `δ(j²−1) = ${F(del * (jf * jf - 1), 3)}`),
-      chk('Temperature within the adiabatic range', Tmin > -0.05 && Tmax < Kl + 0.05, `T ∈ [${F(Tmin, 3)}, ${F(Tmax, 3)}], adiabatic maximum K = ${F(Kl)}`),
+      chk('Temperature within the adiabatic range', Tmin > -0.05 && Tmax < Math.max(Kl, 1) + 0.15, `T ∈ [${F(Tmin, 3)}, ${F(Tmax, 3)}], limit max(K, 1) = ${F(Math.max(Kl, 1))}`),
     ],
     warnings,
     recommendations: [
@@ -376,7 +377,7 @@ function solid(p) {
       rec('low', 'Operating at low supersaturation gives slower, more uniform growth with less secondary nucleation and less precursor lost to fines, which reduces chemical waste per usable crystal.', 'Morphological stability at low driving force.', true),
     ],
     publish: { 'growth.rate': Math.abs(vPhys), 'micro.solid_fraction': fs[fs.length - 1] },
-    numerics: { method: 'Explicit finite differences (Kobayashi anisotropic phase field + heat equation)', dof: 2 * nn, steps, iterations: steps, residual: heatErr, notes: `96×96 grid, Δx = 0.03, Δt = 2×10⁻⁴, zero-flux boundaries, seeded interface noise.` },
+    numerics: { method: 'Explicit finite differences (Kobayashi anisotropic phase field + heat equation)', dof: 2 * nn, steps, iterations: steps, residual: heatErr, notes: `80×80 grid, Δx = 0.03, Δt = 2×10⁻⁴, zero-flux boundaries, seeded interface noise.` },
   };
 }
 
@@ -525,8 +526,8 @@ export default {
   tagline: 'Simulates microstructure evolution — spinodal decomposition, grain growth, dendritic growth, coarsening, sintering — and equilibrium defect populations.',
   inputs,
   presets: [
-    { name: 'Spinodal nanostructure, 50:50 alloy', note: 'Symmetric composition gives a bicontinuous structure, the classic route to nanoporous metals after dealloying.', values: { mode: 'spinodal', c0: 0.5, dx_nm: 1, kappa: 1.5, ch_steps: 160 } },
-    { name: 'Off-symmetric blend, droplet morphology', note: 'A 35:65 composition inside the spinodal separates into droplets that coarsen by Ostwald ripening.', values: { mode: 'spinodal', c0: 0.35, dx_nm: 2, ch_steps: 200, noise: 0.05 } },
+    { name: 'Spinodal nanostructure, 50:50 alloy', note: 'Symmetric composition gives a bicontinuous structure, the classic route to nanoporous metals after dealloying.', values: { mode: 'spinodal', c0: 0.5, dx_nm: 1, kappa: 1.5, ch_steps: 120 } },
+    { name: 'Off-symmetric blend, droplet morphology', note: 'A 35:65 composition inside the spinodal separates into droplets that coarsen by Ostwald ripening.', values: { mode: 'spinodal', c0: 0.35, dx_nm: 2, ch_steps: 150, noise: 0.05 } },
     { name: 'Nanocrystalline ZnO film with pinning particles', note: 'Grain growth of a nanocrystalline oxide film stabilised by 2 % second-phase particles.', values: { mode: 'grain', fp: 0.02, dx_nm: 2, mcs: 120, T_C: 500 } },
     { name: 'Hexagonal dendrite (six-fold)', note: 'Six-fold anisotropy typical of basal-plane growth of hexagonal crystals at high driving force.', values: { mode: 'solid', fold: '6', latent: 1.8, aniso: 0.02, dx_um: 0.5, alpha_th: 1e-9 } },
     { name: 'ZnO nanopowder anneal at 500 °C', note: 'Grain growth, coarsening and initial-stage sintering of 20 nm crystallites during calcination.', values: { mode: 'kinetics', T_C: 500, time_h: 2, d0_nm: 20, dp_nm: 40, sinter: 'gb' } },

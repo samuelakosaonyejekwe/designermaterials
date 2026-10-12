@@ -98,3 +98,17 @@ ul.tight,ol.tight{margin:.3em 0;padding-left:1.2em}ul.tight li,ol.tight li{margi
 @media (max-width:1000px){.workspace{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:900px){#layout{grid-template-columns:minmax(0,1fr)}.split{grid-template-columns:minmax(0,1fr)}}
 .page,.tabset,.tabpane,.results,.inputs,.field,.numrow{min-width:0}.formtop select,.field select{min-width:0;width:100%}.results{overflow-wrap:anywhere}
+/* suite navigator */
+#side .sep{margin-top:6px;border-top:1px solid var(--line);padding-top:14px}
+.sgroup{margin:8px 0 12px;--g:var(--s1)}.sgroup.g2{--g:var(--s3)}.sgroup.g3{--g:var(--s7)}.sgroup.g4{--g:var(--s2)}.sgroup.g5{--g:var(--s4)}.sgroup.g6{--g:var(--s5)}
+.sghead{display:flex;align-items:center;gap:7px;font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:4px 10px 5px;line-height:1.25}.sghead i{width:8px;height:8px;border-radius:3px;background:var(--g);flex:none}
+#side a.mini{position:relative;display:flex;align-items:center;gap:10px;padding:6px 8px;margin:2px 0;border-radius:11px;font-size:.86rem;font-weight:550;line-height:1.25;color:var(--ink-2);border:1px solid transparent;transition:background .15s,border-color .15s,transform .15s}
+#side a.mini .sn{display:grid;place-items:center;width:30px;height:30px;flex:none;border-radius:9px;font-size:.76rem;font-weight:750;font-variant-numeric:tabular-nums;color:var(--g);background:color-mix(in srgb,var(--g) 14%,transparent);transition:background .15s,color .15s}
+#side a.mini .st{color:inherit;width:auto;flex:1}
+#side a.mini:hover{background:var(--surface);border-color:var(--line);transform:translateX(2px);color:var(--ink)}
+#side a.mini:hover .sn{background:color-mix(in srgb,var(--g) 26%,transparent)}
+#side a.mini.on{background:var(--surface);border-color:color-mix(in srgb,var(--g) 45%,var(--line));color:var(--ink);box-shadow:var(--shadow)}
+#side a.mini.on .sn{background:var(--g);color:#fff}
+.navpair{flex:none}.navpair button{min-width:40px;justify-content:center}
+@media (max-width:560px){#net{display:none}#net.off{display:inline}#top{gap:6px;padding:8px 10px}}
+#side{overflow-x:hidden}#side a.mini .st{min-width:0;overflow-wrap:anywhere}.sgroup{min-width:0}
