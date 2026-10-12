@@ -1,0 +1,26 @@
+{
+  "name": "Designer Materials",
+  "short_name": "Designer Materials",
+  "description": "Design, simulate, fabricate, optimise and reverse-engineer nanomaterials and metamaterials. Works offline.",
+  "id": "./",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#0c1a17",
+  "theme_color": "#0b6e63",
+  "categories": ["education", "productivity", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "ZnO nanorod reactor", "url": "./index.html#/suite/21" },
+    { "name": "Case pipeline", "url": "./index.html#/case" },
+    { "name": "Materials library", "url": "./index.html#/library" },
+    { "name": "Geometry Studio", "url": "./index.html#/geometry" }
+  ]
+}

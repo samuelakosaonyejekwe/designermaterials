@@ -1,0 +1,12 @@
+{
+  "name": "designer-materials",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Nanomaterials and metamaterials design, simulation, fabrication and reverse-engineering platform",
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "serve": "python3 -m http.server 8080",
+    "spec": "node tools/build-spec.mjs"
+  }
+}
