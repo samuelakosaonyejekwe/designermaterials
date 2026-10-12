@@ -47,6 +47,10 @@ const SRR = { mode: 'neg_mu', srr_r: 2, srr_a: 5, srr_c: 1, srr_d: 0.1, srr_l: 2
 const MATCHED = { mode: 'nim', fep: 10 * Math.SQRT2, f0m: 10 * Math.sqrt(0.75), Fm: 0.5, f_probe: 10, ge: 0.0001, gm: 0.0001, d_slab: 10, theta: 30 };
 const NIM_LOWLOSS = { mode: 'nim', fep: 12.8, f0m: 10, Fm: 0.3, f_probe: 11, ge: 0.0001, gm: 0.0001, d_slab: 10, theta: 0 };
 
+// --- Fröhlich wavelength of a small silver sphere, Re ε(λ) = −2ε_m, from the Johnson & Christy table of silver
+// (Phys. Rev. B 6, 4370; rows [eV, n, k] between 3.12 and 3.62 eV), Re ε = n² − k² interpolated linearly in photon energy
+const JC_AG_ROWS = [[3.12, 0.05, 2.07], [3.25, 0.05, 1.864], [3.37, 0.07, 1.657], [3.5, 0.1, 1.419], [3.62, 0.14, 1.142]];
+const frohlichAg = em => { const re = r => r[1] * r[1] - r[2] * r[2], tgt = -2 * em; for (let i = 0; i < JC_AG_ROWS.length - 1; i++) { const a = JC_AG_ROWS[i], b = JC_AG_ROWS[i + 1]; if ((re(a) - tgt) * (re(b) - tgt) <= 0) return 1239.84193 / (a[0] + (tgt - re(a)) / (re(b) - re(a)) * (b[0] - a[0])); } return NaN; };
 export default [
   // ------------------------------------------------------------------ multilayers
   { id: 's12-fresnel-normal-glass', suite: 12, title: 'Fresnel reflectance of an air–glass interface at normal incidence', mode: 'multilayer',
@@ -190,11 +194,19 @@ export default [
   { id: 's12-silver-colloid-20nm', suite: 12, title: 'Silver nanospheres (20 nm) in water: extinction peak', mode: 'mie',
     inputs: { mode: 'mie', mat_p: 'Ag', d_p: 20, n_med: 1.33, lam_min: 300, lam_max: 700 }, kpi: 'lam_peak', expected: 400, tol: 0.04, kind: 'reference-data',
     reference: 'Widely tabulated plasmon band of small silver colloids in water (about 400 nm); Kreibig & Vollmer, Optical Properties of Metal Clusters',
-    note: 'The Lorentz–Drude fit for silver is smooth near the interband edge and places the resonance about 10 nm to the red of measurements.' },
+    note: 'With the Johnson & Christy constants the Mie dipole peak of a bare 20 nm sphere in water is 387 nm; measured citrate sols peak at 395–405 nm because of the adsorbate shell, polydispersity and slight aggregation, which a bare-sphere model does not include.' },
   { id: 's12-silver-froehlich-air', suite: 12, title: 'Silver sphere in air: Fröhlich wavelength (Re ε = −2)', mode: 'mie',
-    inputs: { mode: 'mie', mat_p: 'Ag', d_p: 10, n_med: 1, lam_min: 300, lam_max: 700 }, kpi: 'lam_F', expected: 355, tol: 0.05, kind: 'reference-data',
+    inputs: { mode: 'mie', mat_p: 'Ag', d_p: 10, n_med: 1, lam_min: 300, lam_max: 700 }, kpi: 'lam_F', expected: frohlichAg(1), tol: 0.005, kind: 'reference-data',
     reference: 'Johnson & Christy optical constants of silver (Re ε = −2 near 3.5 eV); Bohren & Huffman, Fröhlich condition ε′ = −2ε_m',
-    note: 'The analytic Lorentz–Drude fit used by the suite crosses −2 near 368 nm, 3–4 % to the red of the tabulated constants.' },
+    note: '354.2 nm. The suite uses the tabulated Johnson & Christy constants for silver inside 0.64–6.6 eV (the Rakić Lorentz–Drude fit, kept outside that range, crosses −2 near 368 nm).' },
+  { id: 's12-silver-froehlich-water', suite: 12, title: 'Silver sphere in water: Fröhlich wavelength (Re ε = −2 × 1.33²)', mode: 'mie',
+    inputs: { mode: 'mie', mat_p: 'Ag', d_p: 10, n_med: 1.33, lam_min: 300, lam_max: 700 }, kpi: 'lam_F', expected: frohlichAg(1.33 ** 2), tol: 0.005, kind: 'reference-data',
+    reference: 'Johnson & Christy optical constants of silver; Bohren & Huffman, Fröhlich condition ε′ = −2ε_m',
+    note: '382.7 nm. The reference interpolates Re ε = n² − k² between the tabulated points; the suite interpolates n and k, which differs by under 0.1 nm.' },
+  { id: 's12-silver-sphere-10nm-water-peak', suite: 12, title: 'Silver nanosphere (10 nm) in water: Mie extinction peak against the quasi-static resonance', mode: 'mie',
+    inputs: { mode: 'mie', mat_p: 'Ag', d_p: 10, n_med: 1.33, lam_min: 300, lam_max: 700 }, kpi: 'lam_peak', expected: frohlichAg(1.33 ** 2), tol: 0.01, kind: 'reference-data',
+    reference: 'Johnson & Christy optical constants of silver; quasi-static (Fröhlich) dipole resonance of a small sphere (Bohren & Huffman)',
+    note: 'For a 10 nm sphere the full Mie peak lies about 1 nm to the red of the quasi-static condition (retardation and the finite Im ε).' },
 
   // ------------------------------------------------------------------ effective media
   { id: 's12-maxwell-garnett-hashin-shtrikman', suite: 12, title: 'Maxwell-Garnett mixture equals the Hashin–Shtrikman lower bound', mode: 'effmed',

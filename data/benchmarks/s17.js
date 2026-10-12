@@ -217,11 +217,11 @@ export default [
     reference: 'Onsager exact solution of the square-lattice Ising model: k_BT_c/J = 2/ln(1 + √2) = 2.269'
   },
   {
-    id: 's17-ising-susceptibility-peak', suite: 17, title: '2-D Ising Monte Carlo, 16×16: susceptibility peak near T_c', mode: 'mc',
+    id: 's17-ising-susceptibility-peak', suite: 17, title: '2-D Ising Monte Carlo, 16×16 and 8×8: critical temperature from the Binder-cumulant crossing', mode: 'mc',
     inputs: { mode: 'mc', mcModel: 'ising', mcL: 16, mcSweeps: 600, mcH: 0, seed: 1 },
-    kpi: 'Tc_chi', expected: 2 / Math.log(1 + Math.SQRT2), tol: 0.07, kind: 'analytical',
+    kpi: 'Tc_binder', expected: 2 / Math.log(1 + Math.SQRT2), tol: 0.02, kind: 'analytical',
     reference: 'Onsager exact solution of the square-lattice Ising model: k_BT_c/J = 2/ln(1 + √2) = 2.269',
-    note: 'The peak is located on a temperature grid of spacing 0.15 J/k_B and a 16×16 lattice shifts the susceptibility maximum above the infinite-lattice T_c by an amount ∝ 1/L; both effects are documented by the suite.'
+    note: 'Like-for-like comparison with the infinite-lattice T_c: the crossing of the fourth-order cumulants of the L and L/2 lattices (Wolff cluster sampling) removes the leading 1/L finite-size shift. Seeds 1–6 give 2.247–2.271 (scatter about 0.4 %). The susceptibility peak of the 16×16 lattice itself (KPI Tc_chi, grid spacing 0.15) lies near 2.40, a genuine finite-size shift, and is not benchmarked.'
   },
   {
     id: 's17-ising-spontaneous-magnetisation', suite: 17, title: '2-D Ising Monte Carlo: magnetisation at k_BT/J = 2', mode: 'mc',
@@ -274,9 +274,9 @@ export default [
   {
     id: 's17-kmc-island-density-exponent', suite: 17, title: 'Sub-monolayer nucleation: island density ∝ (D/F)^−1/3', mode: 'kmc',
     inputs: { mode: 'kmc', T_C: 227, Es: 0.75, En: 0.25, Ees: 0, flux: 1, kCov: 2, kL: 32, seed: 1 },
-    kpi: 'chi', expected: 1 / 3, tol: 0.10, kind: 'numerical-reference',
+    kpi: 'chi', expected: 1 / 3, tol: 0.08, kind: 'numerical-reference',
     reference: 'Rate-equation nucleation theory (Venables): χ = i*/(i* + 2) = 1/3 for a critical nucleus of one atom',
-    note: 'Six flux values on a 32×32 lattice (a handful of islands each) give counting noise of several per cent in the fitted slope; at E_n/k_BT ≈ 5.8 dimer dissociation is slow but not strictly absent.'
+    note: 'Count-weighted fit over five flux values, each repeated until 200 islands are counted or its event budget is spent (about 450 islands in total). Seeds 1–8 give 0.324–0.355 (mean 0.340, scatter 3.6 %). The remaining offset is physical, not statistical: at E_n/k_BT ≈ 5.8 dimers still dissociate slowly, which raises the exponent above 1/3, while with fully irreversible attachment (E_n ≥ 0.5 eV) the same lattice gives 0.28–0.30 because D/F = 10³–10⁵ is below the asymptotic scaling regime. A 5 % tolerance would need D/F ≥ 10⁶ and about ten times the event budget.'
   },
   // ── reaction pathways ──
   {

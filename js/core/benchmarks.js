@@ -7,7 +7,7 @@ export async function loadBenchmarks(id) {
   if (!cache.has(id)) cache.set(id, import(`../../data/benchmarks/s${String(id).padStart(2, '0')}.js`).then(m => m.default).catch(() => []));
   return cache.get(id);
 }
-export const KIND = { analytical: 'Exact / analytical solution', 'reference-data': 'Handbook or measured reference data', 'numerical-reference': 'Published numerical benchmark', conservation: 'Exact invariant' };
+export const KIND = { analytical: 'Exact / analytical solution', 'reference-data': 'Handbook or measured reference data', 'numerical-reference': 'Published numerical benchmark', conservation: 'Exact invariant', calibration: 'Calibration case (plausibility range; tighten with your own data)' };
 export function compare(b, got) {
   if (typeof got !== 'number' || !Number.isFinite(got)) return { ok: false, dev: NaN, got };
   const abs = Math.abs(got - b.expected), rel = b.expected !== 0 ? abs / Math.abs(b.expected) : abs;

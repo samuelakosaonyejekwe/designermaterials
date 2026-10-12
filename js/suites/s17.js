@@ -222,6 +222,35 @@ function runIsing(inp) {
   const eqT = (() => { const ef = N.mean(eS.slice(Math.floor(nd / 2))), sd = N.std(eS.slice(Math.floor(nd / 2))) + 1e-9; for (let k = 0; k < nd; k++) if (Math.abs(eS[k] - ef) < 2 * sd) return k + 1; return nd; })();
   const iC = N.argmax(cT), iX = N.argmax(xT), TcC = Ts[iC], TcX = Ts[iX], TcK = TC2D * Jm * 1e-3 / KB, onsM = T => (T < TC2D ? (1 - Math.sinh(2 / T) ** -4) ** 0.125 : 0), map = new Float64Array(n); for (let i = 0; i < n; i++) map[i] = s[i];
   const uEx = Ts.map(isingExactU), iLow = 0, iHigh = nT - 1;
+  // Finite-size-corrected critical temperature: crossing of the Binder cumulant U₄ = 1 − ⟨m⁴⟩/(3⟨m²⟩²) of the L and L/2 lattices,
+  // sampled with the Wolff cluster algorithm (no critical slowing down) on a fine temperature grid around the susceptibility peak.
+  const nbTab = {}, nbOf = Lw => nbTab[Lw] || (nbTab[Lw] = (() => { const t = new Int32Array(4 * Lw * Lw); for (let j = 0; j < Lw * Lw; j++) { const x = j % Lw, y = (j - x) / Lw; t[4 * j] = y * Lw + (x + 1) % Lw; t[4 * j + 1] = y * Lw + (x + Lw - 1) % Lw; t[4 * j + 2] = ((y + 1) % Lw) * Lw + x; t[4 * j + 3] = ((y + Lw - 1) % Lw) * Lw + x; } return t; })());
+  const binder = (Lw, T, nUp) => {
+    const nw = Lw * Lw, nbs = nbOf(Lw), sp = new Int8Array(nw).fill(1), st = new Int32Array(nw), pAdd = 1 - Math.exp(-2 / T), nEq = Math.max(50, Math.floor(nUp / 5)); let M = nw, m2 = 0, m4 = 0;
+    for (let k = 0; k < nEq + nUp; k++) {
+      const i0 = rand.int(nw), s0 = sp[i0]; let top = 0, size = 1; st[top++] = i0; sp[i0] = -s0;
+      while (top) { const j = 4 * st[--top]; for (let q = 0; q < 4; q++) { const b = nbs[j + q]; if (sp[b] === s0 && rand() < pAdd) { sp[b] = -s0; st[top++] = b; size++; } } }
+      M -= 2 * s0 * size; if (k >= nEq) { const mm2 = (M / nw) ** 2; m2 += mm2; m4 += mm2 * mm2; }
+    }
+    return 1 - (m4 / nUp) / (3 * (m2 / nUp) ** 2);
+  };
+  let TcB = NaN, bT = [], bU1 = [], bU2 = [], bFit = null; const L2 = Math.max(4, Math.round(L / 2));
+  if (H === 0) {
+    // stage 1: coarse scan to bracket the crossing (the last change of sign of U₄(L) − U₄(L/2) from positive to negative);
+    // stage 2: linear fit of the difference on a fine grid of ±0.1 J/k_B around the bracket
+    const nB = 7, nUp = Math.max(300, Math.min(2000, Math.floor(3e6 / (n * nB)))), dU = (T, m) => binder(L, T, m) - binder(L2, T, Math.min(4000, 4 * m));
+    const cT = N.linspace(TcX - 0.45, TcX + 0.15, 7), cD = cT.map(T => dU(T, Math.max(200, Math.floor(nUp / 3)))); let ib = -1; for (let i = 0; i < cT.length - 1; i++) if (cD[i] > 0 && cD[i + 1] <= 0) ib = i;
+    if (ib >= 0) {
+      const t1 = cT[ib] + (cT[ib + 1] - cT[ib]) * cD[ib] / (cD[ib] - cD[ib + 1]); bT = N.linspace(t1 - 0.1, t1 + 0.1, nB);
+      for (const T of bT) { const u1 = binder(L, T, nUp), u2 = binder(L2, T, Math.min(4000, 4 * nUp)); bU1.push(u1); bU2.push(u2); }
+      // quadratic least-squares fit of the difference (it is curved near the crossing); the root nearest the bracket is the crossing
+      const xs = bT.map(T => T - t1), c = N.polyfit(xs, bT.map((_, i) => bU1[i] - bU2[i]), 2), disc = c[1] * c[1] - 4 * c[2] * c[0];
+      const roots = Math.abs(c[2]) < 1e-9 ? [-c[0] / c[1]] : disc >= 0 ? [(-c[1] + Math.sqrt(disc)) / (2 * c[2]), (-c[1] - Math.sqrt(disc)) / (2 * c[2])] : [], t0 = roots.length ? t1 + roots.reduce((a, b) => (Math.abs(b) < Math.abs(a) ? b : a)) : NaN; bFit = c;
+      if (Number.isFinite(t0) && t0 > bT[0] - 0.05 && t0 < bT[nB - 1] + 0.05) TcB = t0;
+    }
+    if (!Number.isFinite(TcB)) warnings.push('The Binder-cumulant curves of the two lattice sizes do not cross inside the scanned window; the finite-size-corrected critical temperature falls back to the susceptibility peak.');
+  }
+  const TcBest = Number.isFinite(TcB) ? TcB : TcX;
   checks.push(chk('Susceptibility peak near the Onsager critical temperature', Math.abs(TcX - TC2D) < 0.35, `χ peaks at ${F(TcX, 4)} J/k_B on a ${L}×${L} lattice; exact infinite-lattice value ${F(TC2D, 5)} (finite-size shift ∝ 1/L)`),
     chk('Energy against the exact Onsager solution (away from T_c)', H !== 0 || (Math.abs(eT[iLow] - uEx[iLow]) < 0.03 && Math.abs(eT[iHigh] - uEx[iHigh]) < 0.05), H !== 0 ? 'not applicable with an applied field' : `u(${Ts[iLow]}) = ${F(eT[iLow], 4)} vs ${F(uEx[iLow], 4)};  u(${Ts[iHigh]}) = ${F(eT[iHigh], 4)} vs ${F(uEx[iHigh], 4)} J per spin`),
     chk('Acceptance ratio is physical', acc > 0 && acc < 1, `${F(100 * acc, 3)} % of proposed flips accepted at T = ${F(Tu, 3)} J/k_B`), chk('Run longer than the autocorrelation time', nd / 2 > 20 * tauI, `τ_int ≈ ${F(tauI, 3)} sweeps, ${Math.floor(nd / 2)} measurement sweeps`));
@@ -230,6 +259,7 @@ function runIsing(inp) {
   return {
     summary: `Metropolis Monte Carlo of the 2-D Ising model on a ${L}×${L} periodic lattice (${sweeps} sweeps per temperature). The susceptibility peaks at ${F(TcX, 4)} J/k_B and the specific heat at ${F(TcC, 4)} J/k_B, against the exact Onsager value ${F(TC2D, 5)} J/k_B; for J = ${F(Jm, 3)} meV this corresponds to T_c = ${F(TcK, 4)} K. At T = ${F(Tu, 3)} J/k_B the magnetisation per spin is ${F(mm, 3)} with ${F(100 * acc, 3)} % acceptance.`,
     kpis: [
+      kpi('Tc_binder', 'Critical temperature from the Binder-cumulant crossing', TcBest, 'J/k_B', Number.isFinite(TcB) ? `Temperature at which the fourth-order cumulant U₄ = 1 − ⟨m⁴⟩/(3⟨m²⟩²) of the ${L}×${L} and ${L2}×${L2} lattices coincide (Wolff cluster sampling, quadratic fit of the difference over ${bT.length} temperatures within ±0.1 J/k_B of the bracketed crossing). The crossing removes the leading 1/L finite-size shift that displaces the susceptibility peak; exact value ${F(TC2D, 5)}.` : 'Not evaluated (applied field or no crossing in the window): the susceptibility-peak temperature is repeated here.', Math.abs(TcBest - TC2D) < 0.1),
       kpi('Tc_chi', 'Critical temperature from χ peak', TcX, 'J/k_B', `Temperature of the maximum magnetic susceptibility on the simulated grid (spacing ${F(Ts[1] - Ts[0], 2)}). Finite lattices shift the peak above the exact value by an amount ∝ 1/L.`, Math.abs(TcX - TC2D) < 0.35),
       kpi('Tc_c', 'Critical temperature from specific-heat peak', TcC, 'J/k_B', 'Temperature of the maximum of c = (⟨E²⟩ − ⟨E⟩²)/(N k_B T²); it converges to T_c faster than the susceptibility peak.'),
       kpi('Tc_exact', 'Onsager critical temperature', TC2D, 'J/k_B', 'Exact result k_B T_c/J = 2/ln(1 + √2) for the infinite square lattice — the benchmark for the simulation.'),
@@ -350,8 +380,19 @@ function runKMC(inp) {
   const a = num(inp, 'aLat', 2.9e-10, 1e-10, 1e-9), rand = N.rng(seed), res = sosKMC(L, T, Es, En, Ees, nu0, Fd, cov, 6e5, rand, 60), S = res.samples, fin = S[S.length - 1], n = L * L, kT = KB * T, k0 = res.rate[0], DF = k0 / (4 * Fd);
   if (res.capped) warnings.push(`The event budget (600 000 events) was exhausted at ${F(res.dep / n, 3)} ML of the requested ${F(cov, 3)} ML: surface diffusion is very fast relative to deposition (D/F = ${F(DF, 3)}). Lower the temperature, raise the flux or reduce the lattice size to simulate thicker films.`);
   // island density vs D/F at 0.15 ML
-  const fMul = [0.1, 0.3, 1, 3, 10, 30], isl = fMul.map((f, q) => { const r = sosKMC(L, T, Es, En, Ees, nu0, Fd * f, 0.15, 8e4, N.rng(seed + 17 * (q + 1))); return { DF: k0 / (4 * Fd * f), N: countIslands(r.h, L) / n, cov: r.dep / n, capped: r.capped }; });
-  const okI = isl.filter(q => q.N > 0 && q.cov > 0.1), fitI = okI.length >= 3 ? N.linreg(okI.map(q => Math.log10(q.DF)), okI.map(q => Math.log10(q.N))) : { slope: 0, intercept: 0, r2: 0 }, chi = -fitI.slope;
+  // Each flux value is repeated with fresh seeds until 200 islands have been counted or its event budget (1.8×10⁵) is spent; the pooled
+  // densities are fitted by least squares weighted with the island counts (Poisson counting error 1/√count on ln N).
+  const fMul = [0.1, 0.3, 1, 3, 10, 30], isl = fMul.map((f, q) => {
+    let count = 0, runs = 0, ev = 0, cov = 0, capped = false;
+    for (let r = 0; r < 40 && count < 200 && ev < 1.8e5 && !capped; r++) { const k = sosKMC(L, T, Es, En, Ees, nu0, Fd * f, 0.15, 8e4, N.rng(seed + 17 * (q + 1) + 7919 * r)); ev += k.ev; if (k.capped) { capped = true; if (!runs) { count = countIslands(k.h, L); cov = k.dep / n; runs = 1; } break; } count += countIslands(k.h, L); cov += k.dep / n; runs++; }
+    return { DF: k0 / (4 * Fd * f), N: count / (runs * n), cov: cov / runs, capped, count, runs, ev };
+  });
+  const okI = isl.filter(q => q.N > 0 && q.cov > 0.1 && !q.capped), wfit = (() => {
+    if (okI.length < 3) return { slope: 0, intercept: 0, r2: 0, se: 0 };
+    const x = okI.map(q => Math.log10(q.DF)), y = okI.map(q => Math.log10(q.N)), w = okI.map(q => q.count), sw = N.sum(w), xm = N.sum(x.map((v, i) => w[i] * v)) / sw, ym = N.sum(y.map((v, i) => w[i] * v)) / sw;
+    const sxx = N.sum(x.map((v, i) => w[i] * (v - xm) ** 2)), sxy = N.sum(x.map((v, i) => w[i] * (v - xm) * (y[i] - ym))), syy = N.sum(y.map((v, i) => w[i] * (v - ym) ** 2)), slope = sxx > 0 ? sxy / sxx : 0;
+    return { slope, intercept: ym - slope * xm, r2: sxx > 0 && syy > 0 ? sxy * sxy / (sxx * syy) : 0, se: sxx > 0 ? 1 / (Math.LN10 * Math.sqrt(sxx)) : 0 };   // Var(ln N) = 1/count ⇒ Var(slope) = 1/(ln10² Σw(x − x̄)²)
+  })(), fitI = wfit, chi = -fitI.slope, chiSE = wfit.se, islTot = N.sum(okI.map(q => q.count));
   if (isl.some(q => q.capped)) warnings.push('Some island-density runs hit their event budget before reaching 0.15 ML and were excluded from the scaling fit.');
   const hmax = N.maxOf(Array.from(res.h)), hmean = res.dep / n, Wf = fin.W, lastML = S.filter(q => q.cov >= Math.max(0, fin.cov - 1)), Wmax = N.maxOf(lastML.map(q => q.W)), Wpoisson = Math.sqrt(fin.cov);
   const modeG = Wmax < 0.62 ? 'layer-by-layer (2-D)' : Wf > 0.75 * Wpoisson ? 'rough / multilayer (3-D, kinetically limited)' : 'intermediate (multilayer with partial interlayer transport)';
@@ -371,7 +412,8 @@ function runKMC(inp) {
       kpi('mode', 'Growth mode', modeG, '', `Classified from the largest roughness over the last monolayer (${F(Wmax, 3)} ML) against the layer-by-layer bound 0.5 ML and the random-deposition limit ${F(Wpoisson, 3)} ML.`),
       kpi('DF', 'D/F ratio', DF, '–', `Adatom diffusion coefficient in lattice units, k₀/4 with k₀ = ν₀ exp(−E_s/k_BT) = ${F(k0, 3)} s⁻¹, divided by the deposition flux. Large values (≳ 10⁵) favour few large islands and smooth layers.`),
       kpi('D', 'Adatom surface diffusion coefficient', D, 'm²/s', `D = k₀a²/4 for uncorrelated hops of length a = ${F(a * 1e10, 3)} Å on a square lattice (terrace diffusion of an isolated adatom).`),
-      kpi('chi', 'Island-density scaling exponent', chi, '–', `Slope of log N_island against log(D/F) at 0.15 ML from ${okI.length} flux values (R² = ${F(fitI.r2 ?? 0, 3)}). Rate-equation theory gives 1/3 for irreversible attachment (critical nucleus of one atom) and larger values when dimers can dissociate.`, null),
+      kpi('chi_se', 'Standard error of the island-density exponent', chiSE, '–', `Poisson counting error of the weighted fit, 1/(ln 10·√Σw(x − x̄)²) with weights equal to the ${islTot} islands counted. Halving it needs four times as many islands (a larger lattice or more repeats).`, null),
+      kpi('chi', 'Island-density scaling exponent', chi, '–', `Count-weighted slope of log N_island against log(D/F) at 0.15 ML from ${okI.length} flux values and ${islTot} islands in total (R² = ${F(fitI.r2 ?? 0, 3)}, counting standard error ±${F(chiSE, 2)}). Rate-equation theory gives 1/3 for irreversible attachment (critical nucleus of one atom) and larger values when dimers can dissociate.`, null),
       kpi('N_isl', 'Island density at the reference flux', (isl[2] || isl[0]).N, '1/site', `Number of first-layer islands per lattice site at 0.15 ML and the chosen flux (${F((isl[2] || isl[0]).N / (a * a), 3)} m⁻²).`),
       kpi('layers', 'Exposed layers', exposed, '–', `Number of different height levels present on the final surface (maximum height ${hmax} ML, mean ${F(hmean, 3)} ML); 1–2 for layer-by-layer growth.`),
       kpi('I_ab', 'Anti-Bragg intensity (final)', fin.I, '–', 'Kinematic diffraction intensity at the anti-phase condition, [Σ_h (−1)^h θ_h]², normalised to a flat surface; it oscillates with monolayer period during layer-by-layer growth (RHEED / XRD growth oscillations).'),
@@ -397,7 +439,7 @@ function runKMC(inp) {
       rec('low', 'Use the lowest substrate temperature that still gives the required smoothness: thermal budget dominates the energy use of vacuum deposition, and lower temperatures also limit interdiffusion.', 'Temperature dependence of D/F.', true),
     ],
     publish: { 'prop.D_diff': D, 'geom.thickness': hmean * a, 'growth.rate': Fd * a, 'proc.T_C': T - 273.15, 'geom.number_density': (isl[2] || isl[0]).N / (a * a), 'sim.roughness_ML': Wf },
-    numerics: { method: 'Rejection-free (Bortz–Kalos–Lebowitz) kinetic Monte Carlo with rate classes by lateral coordination', dof: n, steps: res.ev, iterations: res.hops, residual: 0, notes: `Seed ${seed}; event budget 6×10⁵ (main run) + 8×10⁴ per island-density run.` },
+    numerics: { method: 'Rejection-free (Bortz–Kalos–Lebowitz) kinetic Monte Carlo with rate classes by lateral coordination', dof: n, steps: res.ev, iterations: res.hops, residual: 0, notes: `Seed ${seed}; event budget 6×10⁵ (main run) + 8×10⁴ per island-density run, repeated per flux value up to 200 islands or 1.8×10⁵ events.` },
   };
 }
 

@@ -157,9 +157,9 @@ export default [
   },
   {
     id: 's05-gyroid-surface-area', suite: 5, title: 'Gyroid mid-surface area per unit cell', mode: 'tpms',
-    inputs: { mode: 'tpms', tpmsType: 'gyroid', tpmsMode: 'solid', rd: 0.5, rdTo: 0.5, cell: 4e-3 }, kpi: 'Sv', expected: 3.0915 / 4e-3, tol: 0.1, kind: 'reference-data',
+    inputs: { mode: 'tpms', tpmsType: 'gyroid', tpmsMode: 'solid', rd: 0.5, rdTo: 0.5, cell: 4e-3 }, kpi: 'Sv', expected: 3.0915 / 4e-3, tol: 0.02, kind: 'reference-data',
     reference: 'Area of the Schoen gyroid minimal surface per conventional cubic cell, 3.0915 a² (Schoen; tabulated in the minimal-surface literature)',
-    note: 'The suite counts voxel faces × 2/3 at 24 voxels per cell and states an error of about ±10 % for this estimator.',
+    note: 'The suite evaluates S_v = −4·dS₂/dr from the two-point statistics of one cell at 48 voxels per edge (13 lattice directions, extrapolated to zero lag). The trigonometric level set used for the gyroid differs from the exact minimal surface by well under 1 % in area.',
   },
   {
     id: 's05-tpms-power-law', suite: 5, title: 'TPMS stiffness from the empirical power law', mode: 'tpms',
@@ -174,10 +174,10 @@ export default [
     note: 'A power law above the bound (1.5·ρ̄) must be replaced by the bound.',
   },
   {
-    id: 's05-wire-medium-pendry', suite: 5, title: 'Thin-wire medium: plasma frequency of Pendry’s example (a = 5 mm, r = 1 µm)', mode: 'resonant',
-    inputs: { mode: 'resonant', resType: 'wire', cell: 5e-3, wireR: 1e-6, epsH: 1 }, kpi: 'fp', expected: 8.2e9, tol: 0.1, kind: 'reference-data',
+    id: 's05-wire-medium-pendry', suite: 5, title: 'Thin-wire medium: Pendry’s leading-order plasma frequency for his example (a = 5 mm, r = 1 µm)', mode: 'resonant',
+    inputs: { mode: 'resonant', resType: 'wire', cell: 5e-3, wireR: 1e-6, epsH: 1 }, kpi: 'fp_pendry', expected: 8.2e9, tol: 0.005, kind: 'reference-data',
     reference: 'Pendry, Holden, Stewart & Youngs, extremely low frequency plasmons in metallic mesostructures: ω_p² = 2πc²/(a² ln(a/r)), about 8.2 GHz for 1 µm wires on a 5 mm lattice',
-    note: 'The suite uses the refined Belov–Tretyakov–Viitanen logarithm ln(a/(2πr)) + 0.5275, which lies 8.7 % above Pendry’s leading-order estimate for this geometry.',
+    note: 'Like-for-like comparison: the KPI fp_pendry is the leading-order formula quoted in the reference. The suite’s main value (KPI fp) uses the refined Belov–Tretyakov–Viitanen logarithm ln(a/(2πr)) + 0.5275, which lies 8.7 % higher for this geometry and is checked separately in s05-wire-medium-refined.',
   },
   {
     id: 's05-wire-medium-refined', suite: 5, title: 'Thin-wire medium: refined plasma frequency', mode: 'resonant',

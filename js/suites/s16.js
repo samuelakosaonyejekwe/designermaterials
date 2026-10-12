@@ -219,21 +219,24 @@ function spinodal(p) {
 
 // ---------- Monte-Carlo Potts grain growth ----------
 function grains(p) {
-  const n = 64, nn = n * n, rnd = N.rng(p.seed), Q = Math.round(p.Qstates), steps = Math.round(p.mcs), warnings = [];
-  const s = new Int16Array(nn); for (let i = 0; i < nn; i++) s[i] = rnd.int(Q);
-  const nPart = Math.round(p.fp * nn); for (let k = 0, guard = 0; k < nPart && guard < 20 * nn; guard++) { const i = rnd.int(nn); if (s[i] >= 0) { s[i] = -1; k++; } }
+  const n = 64, nn = n * n, Q = Math.round(p.Qstates), steps = Math.round(p.mcs), warnings = [], nPart = Math.round(p.fp * nn);
   const nb = new Int32Array(nn * 8);
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const xm = (x + n - 1) % n, xp = (x + 1) % n, ym = (y + n - 1) % n, yp = (y + 1) % n, o = (y * n + x) * 8; nb[o] = y * n + xm; nb[o + 1] = y * n + xp; nb[o + 2] = ym * n + x; nb[o + 3] = yp * n + x; nb[o + 4] = ym * n + xm; nb[o + 5] = ym * n + xp; nb[o + 6] = yp * n + xm; nb[o + 7] = yp * n + xp; }
   const lab = new Int32Array(nn), stack = new Int32Array(nn);
+  const sampleAt = new Set(N.logspace(1, steps, 26).map(Math.round)), frameAt = new Set(N.linspace(0, steps, 9).map(Math.round));
+  // one seeded lattice; main = true also stores animation frames
+  const sim = (seed, main) => {
+  const rnd = N.rng(seed), s = new Int16Array(nn); for (let i = 0; i < nn; i++) s[i] = rnd.int(Q);
+  for (let k = 0, guard = 0; k < nPart && guard < 20 * nn; guard++) { const i = rnd.int(nn); if (s[i] >= 0) { s[i] = -1; k++; } }
   const count = () => { // connected components (4-neighbour, periodic)
     lab.fill(-1); const areas = [];
     for (let i = 0; i < nn; i++) { if (lab[i] >= 0 || s[i] < 0) continue; let top = 0, a = 0; stack[top++] = i; lab[i] = areas.length; while (top) { const c = stack[--top]; a++; for (let k = 0; k < 4; k++) { const j = nb[c * 8 + k]; if (lab[j] < 0 && s[j] === s[c]) { lab[j] = areas.length; stack[top++] = j; } } } areas.push(a); }
     return areas;
   };
-  const T = [], D = [], NG = [], frames = [], sampleAt = new Set(N.logspace(1, steps, 26).map(Math.round)), frameAt = new Set(N.linspace(0, steps, 9).map(Math.round));
+  const T = [], D = [], NG = [], frames = [];
   const snap = () => { const d = new Uint8Array(nn); for (let i = 0; i < nn; i++) d[i] = s[i] < 0 ? 0 : 1 + (s[i] % 254); return d; };
   const rec1 = t => { const a = count(), mA = N.mean(a); T.push(t); NG.push(a.length); D.push(Math.sqrt(4 * mA / N.PI)); return a; };
-  frames.push({ t: 0, data: snap() });
+  if (main) frames.push({ t: 0, data: snap() });
   let areas = [];
   for (let t = 1; t <= steps; t++) {
     for (let a = 0; a < nn; a++) {
@@ -242,12 +245,23 @@ function grains(p) {
       if (dE <= 0) s[i] = cand;
     }
     if (sampleAt.has(t) || t === steps) areas = rec1(t);
-    if (frameAt.has(t) && frames.length < 12) frames.push({ t, data: snap() });
+    if (main && frameAt.has(t) && frames.length < 12) frames.push({ t, data: snap() });
   }
+  return { T, D, NG, frames, areas, s, final: main ? snap() : null };
+  };
+  const { T, D, NG, frames, areas, s, final } = sim(p.seed, true);
+  // ensemble of up to twelve seeded lattices with the same parameters: pooled mean grain area ⟨A⟩(t) = Σ area / Σ grains
+  const ENS = Math.max(2, Math.min(12, 1 + Math.floor(1e7 / (steps * nn)))), ens = [NG]; for (let q = 1; q < ENS; q++) ens.push(sim(p.seed + 1009 * q, false).NG);   // ensemble size limited by a fixed work budget
+  const cells = nn - nPart, poolA = lat => T.map((_, i) => lat.length * cells / Math.max(1, N.sum(lat.map(g => g[i])))), lateOf = A => { const x = [], y = []; for (let i = Math.floor(T.length * 0.7); i < T.length; i++) { x.push(Math.log(T[i])); y.push(0.5 * Math.log(A[i])); } return x.length > 2 ? N.linreg(x, y).slope : NaN; };
+  // offset-corrected exponent of the parabolic law: ⟨A⟩ − A_ref ∝ (t − t_ref)^(2m), reference = first sample with ⟨A⟩ ≥ 25 cells (grains resolved),
+  // samples kept while at least eight grains per lattice remain
+  const parOf = A => { const i1 = A.findIndex(a => a >= 25); if (i1 < 0) return NaN; const x = [], y = []; for (let i = i1 + 2; i < T.length; i++) if (A[i] > A[i1] * 1.02 && cells / A[i] >= 8) { x.push(Math.log(T[i] - T[i1])); y.push(Math.log(A[i] - A[i1])); } return x.length >= 3 ? N.linreg(x, y).slope / 2 : NaN; };
+  const Aens = poolA(ens), lateE = lateOf(Aens), mParRaw = parOf(Aens), jack = f => { const v = ens.map((_, k) => f(poolA(ens.filter((__, j) => j !== k)))).filter(Number.isFinite); if (v.length < 3) return 0; const m = N.mean(v); return Math.sqrt((v.length - 1) / v.length * N.sum(v.map(q => (q - m) ** 2))); };
+  const mPar = Number.isFinite(mParRaw) ? mParRaw : 0, mParSE = Number.isFinite(mParRaw) ? jack(parOf) : 0, lateSE = jack(lateOf), iRef = Aens.findIndex(a => a >= 25);
   const lt = [], ld = []; for (let i = 0; i < T.length; i++) if (T[i] >= 8 && NG[i] >= 8) { lt.push(Math.log(T[i])); ld.push(Math.log(D[i])); }
   const fit = lt.length > 3 ? N.linreg(lt, ld) : { slope: NaN, r2: 0 }, slope = Number.isFinite(fit.slope) ? fit.slope : 0, nGrowth = slope > 0.02 ? 1 / slope : 50;
   const lateT = [], lateD = []; for (let i = Math.floor(T.length * 0.7); i < T.length; i++) { lateT.push(Math.log(T[i])); lateD.push(Math.log(D[i])); }
-  const late = lateT.length > 2 ? N.linreg(lateT, lateD).slope : slope, stagn = p.fp > 0 && late < 0.15;
+  const late1 = lateT.length > 2 ? N.linreg(lateT, lateD).slope : slope, late = Number.isFinite(lateE) ? lateE : late1, stagn = p.fp > 0 && late < 0.15;
   const dEq = areas.map(a => Math.sqrt(4 * a / N.PI)), dMean = N.mean(dEq), norm = dEq.map(v => v / dMean), h = N.histogram(norm, 12, 0, 3), sdLn = N.std(dEq.filter(v => v > 0).map(Math.log));
   const dxm = p.dx_nm * 1e-9, Df = D[D.length - 1], rPart = 1 / Math.sqrt(N.PI); // single-cell particle, equivalent radius in cells
   const zener3 = p.fp > 0 ? 4 * rPart / (3 * p.fp) : Infinity, zener2 = p.fp > 0 ? 2 * rPart / Math.sqrt(p.fp) : Infinity; // 3-D Zener–Smith diameter; 2-D spacing-controlled estimate
@@ -266,7 +280,9 @@ function grains(p) {
       kpi('zener_3d', 'Zener–Smith limit (3-D)', Number.isFinite(zener3) ? zener3 * dxm : 0, 'm', 'Classical three-dimensional limiting grain diameter D = 4r/(3f) for randomly distributed spherical particles of the same radius and fraction. Zero means no particles.', null),
       kpi('sd_ln', 'Width of grain-size distribution', sdLn, '–', 'Standard deviation of ln(d). Self-similar normal grain growth gives about 0.3–0.45; larger values indicate abnormal growth or pinning.', sdLn < 0.6),
       kpi('t_equiv', 'Equivalent anneal time', tPhys, 's', `Time for the same diameter change under the parabolic law d² − d₀² = 4Mγt with M = ${F(M, 3)} m⁴/(J·s) at ${F(p.T_C)} °C.`, null),
-      kpi('late_slope', 'Late-time growth slope', late, '–', 'd ln d / d ln t over the last 30 % of samples. Values near zero indicate stagnation by particle pinning.', null),
+      kpi('late_slope', 'Late-time growth slope (ensemble)', late, '–', `d ln d / d ln t over the last 30 % of samples of the mean grain size pooled over ${ENS} seeded lattices (jackknife standard error ${F(lateSE, 2)}; this lattice alone gives ${F(late1, 3)}). Values near zero indicate stagnation by particle pinning. Without particles the slope approaches ½ only slowly, because the initial grain size is not negligible.`, null),
+      kpi('m_parabolic', 'Parabolic-law exponent (offset-corrected)', mPar, '–', Number.isFinite(mParRaw) ? `Exponent m in ⟨A⟩ − A_ref ∝ (t − t_ref)^(2m), fitted to the pooled mean grain area of ${ENS} seeded lattices from the first sample with at least 25 cells per grain (t_ref = ${T[iRef]} MCS) while eight or more grains per lattice remain. Curvature-driven growth d² − d₀² = K·t gives exactly ½; particle pinning lowers it towards zero.` : 'Not evaluated: the grains did not grow beyond 25 cells by a resolvable amount within the run (too few steps or strong pinning).', null),
+      kpi('m_se', 'Standard error of the parabolic-law exponent', mParSE, '–', `Delete-one jackknife over the ${ENS} lattices of the ensemble: the sampling uncertainty of the offset-corrected exponent.`, null),
     ],
     series: [
       { key: 'd_t', title: 'Mean grain size versus Monte-Carlo time', xlabel: 'time (MCS)', ylabel: 'mean grain diameter (nm)', logx: true, logy: true, lines: [line('simulation', T, D.map(v => v * p.dx_nm)), line('fit d ∝ t^(1/n)', T, T.map(t => Math.exp((fit.intercept ?? Math.log(D[0])) + slope * Math.log(t)) * p.dx_nm))], explain: 'Log–log growth curve with the fitted power law. A slope of ½ corresponds to parabolic growth; flattening indicates Zener pinning.' },
@@ -279,7 +295,7 @@ function grains(p) {
       eqn('governing', 'Curvature-driven boundary migration', 'v = M γ κ  ⇒  d² − d₀² = 4 M γ t'),
       eqn('formula', 'Zener–Smith limit', 'D_Z = 4 r / (3 f)   (3-D);   D ≈ 2 r / √f   (2-D section)'),
     ],
-    geometry: { kind: 'voxels', nx: n, ny: n, nz: 1, data: snap(), voxel: p.dx_nm, units: 'nm', frames },
+    geometry: { kind: 'voxels', nx: n, ny: n, nz: 1, data: final, voxel: p.dx_nm, units: 'nm', frames },
     checks: [
       chk('Growth exponent near parabolic', nGrowth > 1.6 && nGrowth < 3.2 || stagn, `n = ${F(nGrowth, 3)}${stagn ? ' (pinned)' : ''}`),
       chk('Enough grains for statistics', NG[NG.length - 1] >= 20, `${NG[NG.length - 1]} grains`),
@@ -294,7 +310,7 @@ function grains(p) {
       rec('low', 'Lower the annealing temperature rather than shortening the hold when grain growth must be limited: the mobility falls exponentially, which also reduces furnace energy use.', `Arrhenius mobility with Q = ${F(p.Qgb)} kJ/mol.`, true),
     ],
     publish: { 'micro.grain_size': Df * dxm, 'micro.growth_exponent': nGrowth },
-    numerics: { method: 'Monte-Carlo Potts model (zero temperature, neighbour-orientation proposals, 8-neighbour energy)', dof: nn, steps, iterations: steps * nn, residual: 0, notes: 'Periodic 64×64 lattice; grain statistics by 4-connected component labelling.' },
+    numerics: { method: 'Monte-Carlo Potts model (zero temperature, neighbour-orientation proposals, 8-neighbour energy)', dof: nn, steps, iterations: steps * nn, residual: 0, notes: 'Periodic 64×64 lattice; grain statistics by 4-connected component labelling. Growth exponents are fitted to the mean grain area pooled over an ensemble of seeded lattices (up to twelve, fewer for long runs).' },
   };
 }
 

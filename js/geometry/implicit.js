@@ -349,9 +349,35 @@ function flood(mask, want, nx, ny, nz, axis) {
 }
 
 // Phase fractions, interfacial area, percolation, geometric tortuosity and chord-length (pore-size) statistics.
-// Interfacial area: counted voxel faces between the pore phase and everything else, multiplied by 2/3 — the
-// correction for an isotropically oriented surface (face counting overestimates a smooth surface by a factor 1.5).
-export function voxelStats(vox, { porePhase = 0 } = {}) {
+// Interfacial area per unit volume of a two-phase voxel field from its two-point (phase-change) statistics:
+// S_v = −4·dS₂/dr at r = 0 (Debye; Berryman & Blair), i.e. S_v = 2·⟨C′(0)⟩ with C(r) the probability that two points a
+// distance r apart lie in different phases, averaged over directions. Thirteen lattice directions are used (3 axes, 6 face
+// diagonals, 4 space diagonals) with the Voronoi-cell weights of the Cauchy–Crofton discretisation on a cubic grid
+// (Ohser & Mücklich), and C′(0) is extrapolated to zero lag from one and two lattice steps, C′(0) ≈ [4C(d) − C(2d)]/(2d)
+// (Richardson). The first-order, axes-only form of the same estimator is the voxel face count × 2/3; it reads low where
+// necks and gaps approach the voxel size and is biased for surfaces that are not isotropically oriented.
+// mask: 0/1 per voxel (index = x + nx·(y + ny·z)). Returns S_v in units of 1/voxel.
+const CROFTON_W = [0.091555782, 0.073961256, 0.070391280];   // weight per direction: axis, face diagonal, space diagonal (3·w₁ + 6·w₂ + 4·w₃ = 1)
+const CROFTON_D = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, -1, 0], [1, 0, 1], [1, 0, -1], [0, 1, 1], [0, 1, -1], [1, 1, 1], [1, 1, -1], [1, -1, 1], [1, -1, -1]];
+export function twoPointSurface(mask, nx, ny, nz) {
+  let sv = 0, wsum = 0;
+  for (const [dx, dy, dz] of CROFTON_D) {
+    const nn = abs(dx) + abs(dy) + abs(dz), w = CROFTON_W[nn - 1], len = sqrt(nn), c = [0, 0];
+    for (let lag = 1; lag <= 2; lag++) {
+      const ox = dx * lag, oy = dy * lag, oz = dz * lag, off = ox + nx * (oy + ny * oz);
+      const x0 = max(0, -ox), x1 = nx - max(0, ox), y0 = max(0, -oy), y1 = ny - max(0, oy), z0 = max(0, -oz), z1 = nz - max(0, oz);
+      if (x1 <= x0 || y1 <= y0 || z1 <= z0) { c[lag - 1] = -1; continue; }
+      let f = 0;
+      for (let z = z0; z < z1; z++) for (let y = y0; y < y1; y++) { let p = x0 + nx * (y + ny * z); for (let x = x0; x < x1; x++, p++) if (mask[p] !== mask[p + off]) f++; }
+      c[lag - 1] = f / ((x1 - x0) * (y1 - y0) * (z1 - z0));
+    }
+    if (c[0] < 0) continue;
+    sv += w * (4 * c[0] - (c[1] < 0 ? 2 * c[0] : c[1])) / len; wsum += w;
+  }
+  return wsum ? sv / wsum : 0;
+}
+// Phase fractions, interfacial area, percolation, geometric tortuosity and chord-length (pore-size) statistics.
+export function voxelStats(vox, { porePhase = 0, surfaceOnly = false } = {}) {
   const { nx, ny, nz, data } = vox, N = nx * ny * nz, h = vox.voxel || 1, counts = new Uint32Array(256);
   for (let p = 0; p < N; p++) counts[data[p]]++;
   const fractions = {}; counts.forEach((c, i) => { if (c) fractions[i] = c / N; });
@@ -375,13 +401,15 @@ export function voxelStats(vox, { porePhase = 0 } = {}) {
     chords['xyz'[a]] = { mean: cnt ? sum / cnt * h : 0, count: cnt, histogram: hg };
   }
   out.interfaceFaces = facesN;
-  out.surfaceArea = facesN * h * h * 2 / 3;
-  out.surfaceAreaNote = 'voxel face count × h² × 2/3 (isotropic-surface correction of the staircase overestimate)';
+  out.surfaceAreaFaceCount = facesN * h * h * 2 / 3;
+  out.surfaceArea = twoPointSurface(mask, nx, ny, nz) / h * (N * h ** 3);
+  out.surfaceAreaNote = 'S_v = −4·dS₂/dr at zero lag from the two-point phase-change statistics along 13 lattice directions (Cauchy–Crofton weights, Richardson extrapolation over one and two lattice steps); surfaceAreaFaceCount is the first-order, axes-only value, voxel face count × h² × 2/3';
   out.ssa_per_volume = out.surfaceArea / (N * h ** 3);
   out.chords = chords;
   out.meanPoreChord = (chords.x.mean + chords.y.mean + chords.z.mean) / 3;
   out.poreSizeNote = 'mean pore chord length (line intercepts along x, y, z); for comparison, stereology gives 4φ/S_v';
   out.hydraulicDiameter = out.ssa_per_volume > 0 ? 4 * out.porosity / out.ssa_per_volume : null;
+  if (surfaceOnly) return out;   // fractions, surface and chords only (no percolation search)
   out.percolates = {}; out.solidPercolates = {}; out.tortuosityGeometric = {};
   for (let a = 0; a < 3; a++) {
     const fp = flood(mask, 1, nx, ny, nz, a), fs = flood(mask, 0, nx, ny, nz, a), k = 'xyz'[a];
@@ -414,7 +442,8 @@ function walkTortuosity(data, nx, ny, nz, rand, porePhase = 0) {
 
 // Stochastic porous media. data: 1 = solid, 0 = pore. featureSize is in voxels (sphere / fibre diameter,
 // correlation length, or foam cell size).
-export function porousMedium({ type = 'randomSpheres', size = [48, 48, 48], porosity = 0.5, featureSize = 8, seed = 1, voxel_um = 1, open = true } = {}) {
+// light: true returns the voxel field with porosity and specific surface only (no percolation or tortuosity), for ensemble statistics.
+export function porousMedium({ type = 'randomSpheres', size = [48, 48, 48], porosity = 0.5, featureSize = 8, seed = 1, voxel_um = 1, open = true, light = false } = {}) {
   let [nx, ny, nz] = [0, 1, 2].map(i => clampi(size[i] ?? 48, 4, 256)), capped = null;
   while (nx * ny * nz > 1.1e6) { nx = max(4, floor(nx * 0.9)); ny = max(4, floor(ny * 0.9)); nz = max(4, floor(nz * 0.9)); capped = 'grid reduced to keep the volume below 1.1 million voxels'; }
   const N = nx * ny * nz, data = new Uint8Array(N), rand = rng(seed ?? 1), phi = min(0.98, max(0.02, Number(porosity) || 0.5)), fs = min(max(nx, ny, nz), max(2, Number(featureSize) || 8));
@@ -422,13 +451,15 @@ export function porousMedium({ type = 'randomSpheres', size = [48, 48, 48], poro
     const s = Float32Array.from(fld).sort(), cut = solidBelow ? s[min(N - 1, max(0, round((1 - phi) * N) - 1))] : s[min(N - 1, round(phi * N))];
     for (let p = 0; p < N; p++) data[p] = solidBelow ? (fld[p] <= cut ? 1 : 0) : (fld[p] >= cut ? 1 : 0);
   };
-  const stamp = (cx, cy, cz, r, wrap) => {
-    const R = Math.ceil(r), r2 = r * r; let added = 0;
-    for (let dz = -R; dz <= R; dz++) for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
-      if (dx * dx + dy * dy + dz * dz > r2) continue;
-      let x = round(cx) + dx, y = round(cy) + dy, z = round(cz) + dz;
+  const stamp = (cx, cy, cz, r, wrap, dry = false) => {
+    // voxels whose centre lies within r of the (sub-voxel) sphere centre: the centre is not snapped to the grid, so the digitised
+    // volume and projected area of the spheres are unbiased on average
+    const r2 = r * r; let added = 0;
+    for (let zz = Math.ceil(cz - r); zz <= cz + r; zz++) for (let yy = Math.ceil(cy - r); yy <= cy + r; yy++) for (let xx = Math.ceil(cx - r); xx <= cx + r; xx++) {
+      if ((xx - cx) ** 2 + (yy - cy) ** 2 + (zz - cz) ** 2 > r2) continue;
+      let x = xx, y = yy, z = zz;
       if (wrap) { x = (x % nx + nx) % nx; y = (y % ny + ny) % ny; z = (z % nz + nz) % nz; } else if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) continue;
-      const p = x + nx * (y + ny * z); if (!data[p]) { data[p] = 1; added++; }
+      const p = x + nx * (y + ny * z); if (!data[p]) { if (!dry) data[p] = 1; added++; }
     }
     return added;
   };
@@ -436,7 +467,8 @@ export function porousMedium({ type = 'randomSpheres', size = [48, 48, 48], poro
   if (type === 'randomSpheres') {
     model = 'Boolean model of overlapping spheres (periodic); porosity target φ = exp(−n·V_sphere), spheres added until reached';
     const r = fs / 2; let solid = 0, guard = 0;
-    while (solid < (1 - phi) * N && guard++ < 200000) solid += stamp(rand() * nx, rand() * ny, rand() * nz, r, true);
+    // the last sphere is placed only if it brings the solid fraction closer to the target than leaving it out
+    while (solid < (1 - phi) * N && guard++ < 200000) { const cx = rand() * nx, cy = rand() * ny, cz = rand() * nz, add = stamp(cx, cy, cz, r, true, true); if (solid + add - (1 - phi) * N > (1 - phi) * N - solid) break; solid += stamp(cx, cy, cz, r, true); }
   } else if (type === 'fibres') {
     model = 'randomly oriented straight overlapping cylinders (isotropic directions), added until the solid fraction is reached';
     const r = max(0.75, fs / 2), Lmax = hypot(nx, ny, nz); let solid = 0, guard = 0;
@@ -483,8 +515,9 @@ export function porousMedium({ type = 'randomSpheres', size = [48, 48, 48], poro
     quantileFill(a, false);
   } else throw new Error(`Unknown porous-medium type "${type}". Use randomSpheres, gaussianField, fibres or voronoiFoam.`);
   const vox = { kind: 'voxels', nx, ny, nz, data, voxel: voxel_um, units: 'µm', type, model, seed: seed ?? 1 };
+  if (light) { const q = voxelStats(vox, { surfaceOnly: true }); return Object.assign(vox, { porosity: q.porosity, targetPorosity: phi, ssa: q.ssa_per_volume, light: true }); }
   const s = voxelStats(vox);
-  Object.assign(vox, { porosity: s.porosity, targetPorosity: phi, ssa: s.ssa_per_volume, ssaUnits: '1/µm (interfacial area per bulk volume, face count × 2/3)', percolates: s.percolates, solidPercolates: s.solidPercolates, tortuosityGeometric: s.tortuosityGeometric, meanPoreChord: s.meanPoreChord, hydraulicDiameter: s.hydraulicDiameter });
+  Object.assign(vox, { porosity: s.porosity, targetPorosity: phi, ssa: s.ssa_per_volume, ssaUnits: '1/µm (interfacial area per bulk volume, two-point estimator extrapolated to zero lag)', ssaFaceCount: s.surfaceAreaFaceCount / (N * voxel_um ** 3), percolates: s.percolates, solidPercolates: s.solidPercolates, tortuosityGeometric: s.tortuosityGeometric, meanPoreChord: s.meanPoreChord, hydraulicDiameter: s.hydraulicDiameter });
   vox.tortuosity = (s.percolates.x || s.percolates.y || s.percolates.z) ? walkTortuosity(data, nx, ny, nz, rand) : null;
   vox.tortuosityNote = 'tortuosity factor τ = D₀/D_eff from a pore-space lattice random walk with periodic wrapping (200 walkers; statistical scatter of roughly ±15 %); null when the pore space does not percolate';
   if (capped) vox.capped = capped;

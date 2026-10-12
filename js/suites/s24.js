@@ -524,7 +524,8 @@ function runUq(inp) {
   // running mean and standard deviation
   const cn = [...new Set(N.logspace(Math.log10(20), Math.log10(n), 40).map(Math.round))].filter(k => k >= 2 && k <= n), cm = [], cs = []; { let s = 0, s2 = 0, j = 0; for (let i = 0; i < n; i++) { s += Yv[i]; s2 += Yv[i] * Yv[i]; if (i + 1 === cn[j]) { const mu = s / (i + 1); cm.push(mu); cs.push(Math.sqrt(Math.max(0, (s2 - (i + 1) * mu * mu) / i))); j++; } } }
   // Saltelli scheme for first-order (Saltelli 2010) and total (Jansen) Sobol indices: independent inputs
-  const Ns = N.clamp(2 * n, 2000, 6000), r2 = N.rng(seed + 101), A = Array.from({ length: Ns }, () => V.map(() => r2.normal())), B = Array.from({ length: Ns }, () => V.map(() => r2.normal())), fA = A.map(fz), fB = B.map(fz);
+  const Ns = N.clamp(2 * n, 2000, Math.max(6000, Math.floor(120000 / (d + 2)))),   // base samples; capped by total model evaluations Ns·(d + 2) ≤ 120 000
+     r2 = N.rng(seed + 101), A = Array.from({ length: Ns }, () => V.map(() => r2.normal())), B = Array.from({ length: Ns }, () => V.map(() => r2.normal())), fA = A.map(fz), fB = B.map(fz);
   const all = fA.concat(fB), VY = N.variance(all), f0 = N.mean(all), S1 = [], ST = [];
   for (let i = 0; i < d; i++) { let s1 = 0, st = 0; for (let k = 0; k < Ns; k++) { const ab = [...A[k]]; ab[i] = B[k][i]; const fab = fz(ab); s1 += (fB[k] - f0) * (fab - fA[k]); st += (fA[k] - fab) ** 2; } S1.push(VY > 0 ? s1 / Ns / VY : 0); ST.push(VY > 0 ? st / (2 * Ns) / VY : 0); }
   const flat = !(VY > 1e-24 * Math.max(mean * mean, 1e-300)); if (flat) { w.push('Output variance is zero (no input uncertainty): sensitivity indices cannot be defined and are reported as zero.'); S1.fill(0); ST.fill(0); }

@@ -24,6 +24,10 @@ const MIM = { mode: 'resonator', resType: 'mim', fLo: 100, fHi: 150, m1: 0.1, k1
 const AUX = { mode: 'auxetic', nuT: -1, EratT: 1e-3, rhoMax: 0.3, cellL: 5, tMin: 0.05, seed: 1 };
 const MBB = { mode: 'topo', tProb: 'mbb', nelx: 60, nely: 20, volfrac: 0.5, penal: 3, rminF: 1.5, tIter: 80 };
 
+// --- Fröhlich wavelength of a small silver sphere, Re ε(λ) = −2ε_m, from the Johnson & Christy table of silver
+// (Phys. Rev. B 6, 4370; rows [eV, n, k] between 3.12 and 3.62 eV), Re ε = n² − k² interpolated linearly in photon energy
+const JC_AG_ROWS = [[3.12, 0.05, 2.07], [3.25, 0.05, 1.864], [3.37, 0.07, 1.657], [3.5, 0.1, 1.419], [3.62, 0.14, 1.142]];
+const frohlichAg = em => { const re = r => r[1] * r[1] - r[2] * r[2], tgt = -2 * em; for (let i = 0; i < JC_AG_ROWS.length - 1; i++) { const a = JC_AG_ROWS[i], b = JC_AG_ROWS[i + 1]; if ((re(a) - tgt) * (re(b) - tgt) <= 0) return 1239.84193 / (a[0] + (tgt - re(a)) / (re(b) - re(a)) * (b[0] - a[0])); } return NaN; };
 export default [
   {
     id: 's25-auxetic-target-poisson', suite: 25, title: 'Inverse honeycomb design reaches ν₁₂ = −1', mode: 'auxetic',
@@ -184,5 +188,17 @@ export default [
     id: 's25-knn-identical-composition-bandgap', suite: 25, title: 'Nearest-neighbour screening returns the band gap of an identical composition (ZnO)', mode: 'knn',
     inputs: { mode: 'knn', kProp: 'bandgap_eV', kMat: 'zno-nanoparticles', kNN: 3 }, kpi: 'pred', expected: 3.37, tol: 0.005, kind: 'reference-data',
     reference: 'Room-temperature band gap of wurtzite ZnO, 3.37 eV (semiconductor data handbooks)',
+  },
+  {
+    id: 's25-silver-sphere-water', suite: 25, title: 'Small silver sphere in water: plasmon resonance', mode: 'nano',
+    inputs: { mode: 'nano', nanoType: 'lspr', metal: 'Ag', lamT: 500, nMed: 1.33 }, kpi: 'lamS', expected: frohlichAg(1.33 ** 2), tol: 0.01, kind: 'reference-data',
+    reference: 'Johnson & Christy optical constants of silver; Fröhlich condition Re ε = −2ε_m for a small sphere (Bohren & Huffman)',
+    note: '382.7 nm. The suite locates the absorption maximum of the quasi-static polarisability with the tabulated silver constants.',
+  },
+  {
+    id: 's25-silver-sphere-air', suite: 25, title: 'Small silver sphere in air: plasmon resonance', mode: 'nano',
+    inputs: { mode: 'nano', nanoType: 'lspr', metal: 'Ag', lamT: 500, nMed: 1 }, kpi: 'lamS', expected: frohlichAg(1), tol: 0.01, kind: 'reference-data',
+    reference: 'Johnson & Christy optical constants of silver (Re ε = −2 at 3.50 eV); Fröhlich condition for a small sphere in air (Bohren & Huffman)',
+    note: '354.2 nm.',
   },
 ];

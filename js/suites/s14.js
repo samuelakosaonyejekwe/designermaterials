@@ -33,7 +33,7 @@ function bondCell(nodes, Lx, Ly, l) { // connect all node pairs (and images) sep
     if (Math.abs(Math.hypot(nodes[j][0] + sx * Lx - nodes[i][0], nodes[j][1] + sy * Ly - nodes[i][1]) - l) < 1e-6 * l) els.push([i, j, sx, sy]);
   } return { nodes, els, Lx, Ly };
 }
-function makeCell(topo, l, hl, thDeg, rR) {
+function makeCell(topo, l, hl, thDeg, rR, ringT = 1) {
   const s3 = Math.sqrt(3);
   if (topo === 'square') return bondCell([[0, 0]], l, l, l);
   if (topo === 'triangular') return bondCell([[0, 0], [l / 2, l * s3 / 2]], l, l * s3, l);
@@ -42,7 +42,7 @@ function makeCell(topo, l, hl, thDeg, rR) {
   if (topo === 'chiral') { // hexachiral: 12-gon rings on a triangular lattice joined by tangent ligaments
     const R = l, r = rR * R, ph = Math.acos(2 * r / R), cen = [[0, 0], [R / 2, s3 * R / 2]], nodes = [], els = [];
     cen.forEach(c => { for (let m = 0; m < 12; m++) nodes.push([c[0] + r * Math.cos(ph + m * PI / 6), c[1] + r * Math.sin(ph + m * PI / 6)]); });
-    for (let a = 0; a < 2; a++) for (let m = 0; m < 12; m++) els.push([a * 12 + m, a * 12 + (m + 1) % 12, 0, 0]);
+    for (let a = 0; a < 2; a++) for (let m = 0; m < 12; m++) els.push([a * 12 + m, a * 12 + (m + 1) % 12, 0, 0, ringT]);   // fifth entry: wall-thickness factor of the ring segments
     const tgt = [[[0, 1, 0], [1, 0, 0], [1, -1, 0]], [[1, 1, 0], [0, 1, 1], [0, 0, 1]]]; // [ring, sx, sy] for directions 0°, 60°, 120°
     for (let a = 0; a < 2; a++) for (let k = 0; k < 3; k++) { const [b, sx, sy] = tgt[a][k]; els.push([a * 12 + 2 * k, b * 12 + (2 * k + 6) % 12, sx, sy]); }
     return { nodes, els, Lx: R, Ly: s3 * R, ligament: Math.sqrt(R * R - 4 * r * r), ring: r };
@@ -52,15 +52,16 @@ function makeCell(topo, l, hl, thDeg, rR) {
   return { nodes: [[0, 0], [0, h], [cx, h + sy], [cx, 2 * h + sy]], els: [[0, 1, 0, 0], [1, 2, 0, 0], [1, 2, -1, 0], [2, 3, 0, 0], [3, 0, 0, 1], [3, 0, 1, 1]], Lx: 2 * cx, Ly: 2 * (h + sy) };
 }
 function prepElements(cell, E, nu, t, timo) {
-  const G = E / (2 * (1 + nu)), A = t, I = t ** 3 / 12; let len = 0;
-  const els = cell.els.map(([i, j, sx, sy]) => {
+  const G = E / (2 * (1 + nu)); let len = 0;
+  const els = cell.els.map(([i, j, sx, sy, tf = 1]) => {
+    const A = t * tf, I = A ** 3 / 12;
     const SX = sx * cell.Lx, SY = sy * cell.Ly, dx = cell.nodes[j][0] + SX - cell.nodes[i][0], dy = cell.nodes[j][1] + SY - cell.nodes[i][1], L = Math.hypot(dx, dy), c = dx / L, s = dy / L;
     const phi = timo ? 12 * E * I / ((5 / 6) * G * A * L * L) : 0, ea = E * A / L, a = 12 * E * I / ((1 + phi) * L ** 3), b = 6 * E * I / ((1 + phi) * L * L), c1 = (4 + phi) * E * I / ((1 + phi) * L), c2 = (2 - phi) * E * I / ((1 + phi) * L);
     const kl = [[ea, 0, 0, -ea, 0, 0], [0, a, b, 0, -a, b], [0, b, c1, 0, -b, c2], [-ea, 0, 0, ea, 0, 0], [0, -a, -b, 0, a, -b], [0, b, c2, 0, -b, c1]];
     const T = N.zeros(6, 6); for (const o of [0, 3]) { T[o][o] = c; T[o][o + 1] = s; T[o + 1][o] = -s; T[o + 1][o + 1] = c; T[o + 2][o + 2] = 1; }
-    len += L; return { i, j, SX, SY, L, c, s, kl, T, kg: N.matMul(N.transpose(T), N.matMul(kl, T)) };
+    len += L * tf; return { i, j, SX, SY, L, c, s, kl, T, kg: N.matMul(N.transpose(T), N.matMul(kl, T)) };
   });
-  return { els, rho: len * t / (cell.Lx * cell.Ly), A, I };
+  return { els, rho: len * t / (cell.Lx * cell.Ly), A: t, I: t ** 3 / 12 };
 }
 const jump = (e, q) => [q[0] * e.SX + 0.5 * q[2] * e.SY, 0.5 * q[2] * e.SX + q[1] * e.SY, 0];
 function homogenise(cell, E, nu, t, timo) {
@@ -123,7 +124,7 @@ function lattice2d(inp) {
   if (topo === 'honeycomb') { hl = 1; th = 30; }
   if (topo === 'reentrant') { const lim = -Math.asin(Math.min(0.95 * hl / 2, 0.98)) * 180 / PI; if (th < lim) { W.push(`Re-entrant angle limited to ${f3(lim)}°: beyond it opposite vertices of the cell would touch (h must exceed 2l·|sin θ|).`); th = lim; } if (th > 80) th = 80; }
   if (t > 0.3 * l) { W.push('Wall thickness limited to 0.3 l: slender-beam elements are not meaningful for stockier walls.'); t = 0.3 * l; }
-  const cell = makeCell(topo, l, hl, th, inp.r_R), tRef = topo === 'chiral' ? cell.ligament : l;
+  const ringT = N.clamp(Number(inp.ring_t) || 1, 0.5, 30), cell = makeCell(topo, l, hl, th, inp.r_R, ringT), tRef = topo === 'chiral' ? cell.ligament : l;
   let H; try { H = homogenise(cell, Es, nus, t, timo); } catch (e) { throw new Error('Lattice stiffness matrix is singular (mechanism): ' + e.message); }
   const an = analytic(topo, hl, th, t / l, cell), dir = inp.load_dir === '2' ? 1 : 0, eps = inp.strain_pct / 100, Ed = dir ? H.E2 : H.E1, sv = [0, 0, 0]; sv[dir] = Ed * eps;
   const ev = N.matVec(H.S, sv), ws = wallStress(cell, H, ev, t), sf = inp.yield_s / Math.max(ws.smax, 1e-30), nuD = dir ? H.nu21 : H.nu12;
@@ -139,7 +140,7 @@ function lattice2d(inp) {
   const tl = t / l, errE = an ? Math.abs(H.E1 / Es - an.E1) / an.E1 : 0, errNu = an ? Math.abs(H.nu12 - an.nu12) : 0, tolE = topo === 'chiral' ? 0.9 : 0.06 + 6 * tl * tl * (topo === 'reentrant' || topo === 'honeycomb' ? 1 / Math.max(Math.sin(th * PI / 180) ** 2, 0.02) : 1), tolNu = topo === 'chiral' ? 0.5 : 0.03 + 0.06 * Math.abs(an ? an.nu12 : 0) + (topo === 'reentrant' || topo === 'honeycomb' ? 6 * tl * tl * Math.abs(an ? an.nu12 : 0) / Math.max(Math.sin(th * PI / 180) ** 2, 0.02) : 0);
   if (sf < 1) W.push(`Peak wall stress ${f3(ws.smax / 1e6)} MPa at ${inp.strain_pct} % strain exceeds the wall yield strength: the response is no longer linear elastic at this strain.`);
   if (eps > 0.02) W.push('Applied strain above 2 %: the small-displacement solution is extrapolated linearly; cell-wall rotation changes the effective properties (and Poisson\'s ratio) at large strain.');
-  if (topo === 'chiral') W.push('Rings are modelled as 12-sided polygons of straight beam elements with the same thickness as the ligaments; the classical ν = −1 result assumes rigid rings, so the finite-element value is less negative.');
+  if (topo === 'chiral') W.push(ringT >= 10 ? `Rings are modelled as 12-sided polygons of beam elements ${f3(ringT)} times thicker than the ligaments (nearly rigid rings): the result approaches the classical Prall–Lakes value ν = −1.` : `Rings are modelled as 12-sided polygons of straight beam elements ${ringT === 1 ? 'with the same thickness as' : f3(ringT) + ' times the thickness of'} the ligaments; the classical ν = −1 result assumes rigid rings, so the finite-element value is less negative. Raise the ring wall thickness ratio to approach the rigid-ring limit.`);
   const auxetic = H.nu12 < 0 || H.nu21 < 0;
   return {
     summary: `${TOPO[topo]} with ${f3(t)} mm walls on ${f3(l)} mm cells (relative density ${f3(H.rho)}): E₁ = ${f3(H.E1 / 1e6)} MPa, E₂ = ${f3(H.E2 / 1e6)} MPa, ν₁₂ = ${f3(H.nu12)}, ν₂₁ = ${f3(H.nu21)}, G₁₂ = ${f3(H.G12 / 1e6)} MPa from periodic frame finite elements${an ? ` (${an.name}: E₁ = ${f3(an.E1 * Es / 1e6)} MPa, ν₁₂ = ${f3(an.nu12)})` : ''}. The lattice is ${auxetic ? 'auxetic (negative Poisson\'s ratio)' : 'conventional (non-negative Poisson\'s ratio)'}. At ${inp.strain_pct} % strain along direction ${dir + 1} the peak wall stress is ${f3(ws.smax / 1e6)} MPa (safety factor ${f3(sf)}).`,
@@ -648,6 +649,7 @@ export default {
     { key: 'wall_t', label: 'Wall thickness t', unit: 'mm', value: 0.4, min: 0.00001, max: 100, log: true, group: '2-D lattice', showIf: M('lattice2d'), help: 'In-plane thickness of the walls. Bending-dominated stiffness scales with (t/l)³, stretch-dominated with t/l.' },
     { key: 'h_l', label: 'Wall length ratio h/l', unit: '–', value: 2, min: 0.5, max: 4, group: '2-D lattice', showIf: M('lattice2d'), help: 'Ratio of the vertical wall length to the inclined wall length of the general honeycomb (ignored by other topologies).' },
     { key: 'theta_c', label: 'Cell angle θ', unit: '°', value: -30, min: -70, max: 70, group: '2-D lattice', showIf: M('lattice2d'), help: 'Inclination of the oblique walls from the horizontal: +30° is the regular hexagon, negative values give re-entrant (auxetic) cells.' },
+    { key: 'ring_t', label: 'Chiral ring wall thickness / ligament thickness', unit: '–', value: 1, min: 0.5, max: 30, group: '2-D lattice', showIf: { mode: ['lattice2d'], topology: ['chiral'] }, help: 'Wall thickness of the rings relative to the ligaments. One gives compliant rings that ovalise under load; values of 10 or more approach the rigid-ring idealisation of the Prall–Lakes model (ν = −1).' },
     { key: 'r_R', label: 'Chiral ring radius ratio r/R', unit: '–', value: 0.25, min: 0.1, max: 0.42, group: '2-D lattice', showIf: M('lattice2d'), help: 'Ring radius divided by the ring centre spacing (chiral lattice only); larger rings give longer lever arms and softer lattices.' },
     { key: 'beam', label: 'Beam theory', type: 'select', value: 'timoshenko', group: '2-D lattice', showIf: M('lattice2d', 'nlc'), help: 'Timoshenko elements include transverse shear of the walls (important for thick walls); Euler–Bernoulli neglects it.', options: [{ value: 'timoshenko', label: 'Timoshenko (with shear)' }, { value: 'euler', label: 'Euler–Bernoulli' }] },
     { key: 'load_dir', label: 'Loading direction', type: 'select', value: '1', group: '2-D lattice', showIf: M('lattice2d'), help: 'Direction of the uniaxial stress used for the deformed shape, wall stress and published modulus.', options: [{ value: '1', label: 'x₁ (horizontal)' }, { value: '2', label: 'x₂ (vertical)' }] },

@@ -180,8 +180,9 @@ export default [
   },
   {
     id: 's07-zno-nanorod-length-3h', suite: 7, title: 'ZnO nanorods from 25 mmol/L zinc nitrate + HMTA, 90 °C, 3 h: rod length', mode: 'zno',
-    inputs: { mode: 'zno', chem: 'zn_nitrate', cZn: 25, cHMTA: 25, cOH: 0, T: 90, tmin: 180 }, kpi: 'L_final', expected: 1500, tol: 0.35, kind: 'reference-data',
+    inputs: { mode: 'zno', chem: 'zn_nitrate', cZn: 25, cHMTA: 25, cOH: 0, T: 90, tmin: 180 }, kpi: 'L_final', expected: 1500, tol: 500 / 1500, kind: 'calibration',
     reference: 'Seeded hydrothermal growth of ZnO nanorod arrays (Vayssieres; Greene et al.): lengths of roughly 1–2 µm after about 3 h at 90 °C in equimolar 25 mmol/L baths',
-    note: 'Order-of-magnitude check only: reported lengths scatter between about 1 and 2 µm with seed layer and vessel, and the surface rate constant of this reduced model is a calibration parameter. The tolerance spans that literature range.'
+    note: 'Calibration case, not a pass/fail validation: an order-of-magnitude plausibility check. Reported lengths scatter between about 1 and 2 µm with seed layer, vessel and bath ageing, and the surface rate constant of this reduced model is a calibration parameter. Expected value = middle of the literature range, tolerance = half-range. Tighten it by calibrating the rate constant against your own growth series in Suite 24 (calibration mode).',
+    range: [1000, 2000]
   },
 ];

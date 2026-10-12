@@ -97,11 +97,11 @@ export default [
     note: 'Default log-normal permeability field (σ_lnK = 1).',
   },
   {
-    id: 's09-darcy2d-lognormal-geometric-mean', suite: 9, title: 'Effective permeability of a 2-D log-normal field against the geometric mean', mode: 'darcy2d',
-    inputs: { mode: 'darcy2d', sigK: 1, corr: 3, seed: 1, grid: 'medium' }, kpi: 'Krat',
-    expected: 1, tol: 0.15, kind: 'analytical',
+    id: 's09-darcy2d-lognormal-geometric-mean', suite: 9, title: 'Ensemble-mean effective permeability of a 2-D isotropic log-normal field against the geometric mean', mode: 'darcy2d',
+    inputs: { mode: 'darcy2d', sigK: 1, corr: 3, seed: 1, grid: 'medium', nens: 16 }, kpi: 'Krat_ens',
+    expected: 1, tol: 0.03, kind: 'analytical',
     reference: 'Matheron\'s exact result for isotropic two-dimensional log-normal media: K_eff equals the geometric mean (Dagan, Flow and Transport in Porous Formations)',
-    note: 'The theorem holds for an infinite, statistically isotropic field. A single 48 × 32 realisation with a correlation length of a few cells is not ergodic, so deviations of about 10 % are expected; this is sampling scatter, not solver error (the homogeneous cases above are exact).',
+    note: 'Mean over 16 independent seeded 48 × 32 realisations of a statistically isotropic field (σ_lnK = 1, correlation length about 1.4 cells of the finer spacing); the ensemble standard error is 1.0 % (KPI Krat_se), so the tolerance is three standard errors. Single realisations scatter by about 4 %. The harmonic face averaging lowers the mean by roughly 1 % at this correlation length.',
   },
   // ------------------------------------------------------------------ channel flow
   {

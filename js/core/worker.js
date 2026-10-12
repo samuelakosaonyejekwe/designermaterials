@@ -3,6 +3,7 @@ let cancelled = false;
 self.onmessage = async e => {
   const m = e.data;
   if (m.type === 'cancel') { cancelled = true; return; }
+  if (m.type === 'bench') { try { const B = await import('./benchmarks.js'); self.postMessage({ type: 'bench', id: m.id, results: await B.runSuiteBenchmarks(m.id) }); } catch (err) { self.postMessage({ type: 'bench', id: m.id, results: [], error: String(err && err.message || err) }); } return; }
   if (m.type !== 'run') return;
   cancelled = false;
   try {

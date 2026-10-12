@@ -37,15 +37,23 @@ const LD = { // Lorentz–Drude fits (Rakić et al. 1998 parameter set), energie
   Ag: { wp: 9.01, f: [0.845, 0.065, 0.124, 0.011, 0.840, 5.646], G: [0.048, 3.886, 0.452, 0.065, 0.916, 2.419], w: [0, 0.816, 4.481, 8.185, 9.083, 20.29] },
   Al: { wp: 14.98, f: [0.523, 0.227, 0.050, 0.166, 0.030], G: [0.047, 0.333, 0.312, 1.351, 3.382], w: [0, 0.162, 1.544, 1.808, 3.473] },
 };
+// Measured optical constants of silver, [photon energy (eV), n, k]: Johnson & Christy, "Optical constants of the noble metals",
+// Phys. Rev. B 6, 4370 (1972), room-temperature evaporated films, 0.64–6.60 eV. n and k are interpolated linearly in energy.
+const JC_AG = [[0.64,0.24,14.08],[0.77,0.15,11.85],[0.89,0.13,10.1],[1.02,0.09,8.828],[1.14,0.04,7.795],[1.26,0.04,6.992],[1.39,0.04,6.312],[1.51,0.04,5.727],[1.64,0.03,5.242],[1.76,0.04,4.838],[1.88,0.05,4.483],[2.01,0.06,4.152],[2.13,0.05,3.858],[2.26,0.06,3.586],[2.38,0.05,3.324],[2.5,0.05,3.093],[2.63,0.05,2.869],[2.75,0.04,2.657],[2.88,0.04,2.462],[3,0.05,2.275],[3.12,0.05,2.07],[3.25,0.05,1.864],[3.37,0.07,1.657],[3.5,0.1,1.419],[3.62,0.14,1.142],[3.74,0.17,0.829],[3.87,0.81,0.392],[3.99,1.13,0.616],[4.12,1.34,0.964],[4.24,1.39,1.161],[4.36,1.41,1.264],[4.49,1.41,1.331],[4.61,1.38,1.372],[4.74,1.35,1.387],[4.86,1.33,1.393],[4.98,1.31,1.389],[5.11,1.3,1.378],[5.23,1.28,1.367],[5.36,1.28,1.357],[5.48,1.26,1.344],[5.6,1.25,1.342],[5.73,1.22,1.336],[5.85,1.2,1.325],[5.98,1.18,1.312],[6.1,1.15,1.296],[6.22,1.14,1.277],[6.35,1.12,1.255],[6.47,1.1,1.232],[6.6,1.07,1.212]];
+const jcAg = E => { let i = 1; while (i < JC_AG.length - 1 && JC_AG[i][0] < E) i++; const a = JC_AG[i - 1], b = JC_AG[i], t = (E - a[0]) / (b[0] - a[0]), n = a[1] + t * (b[1] - a[1]), k = a[2] + t * (b[2] - a[2]); return { re: n * n - k * k, im: 2 * n * k }; };
 const sell = (l2, terms, a = 1) => terms.reduce((s, [B, Cc]) => s + B * l2 / (l2 - Cc), a);
 const MATS = {
-  Au: { label: 'Gold (Lorentz–Drude)', metal: true }, Ag: { label: 'Silver (Lorentz–Drude)', metal: true }, Al: { label: 'Aluminium (Lorentz–Drude)', metal: true },
+  Au: { label: 'Gold (Lorentz–Drude)', metal: true }, Ag: { label: 'Silver (Johnson & Christy table)', metal: true }, Al: { label: 'Aluminium (Lorentz–Drude)', metal: true },
   ITO: { label: 'Indium tin oxide (Drude)', metal: true, formula: 'In2O3' }, Si: { label: 'Silicon' }, SiO2: { label: 'Fused silica (Sellmeier)' }, TiO2: { label: 'Titanium dioxide, rutile (ordinary)' },
   ZnO: { label: 'Zinc oxide (ordinary)' }, glass: { label: 'Borosilicate crown glass (BK7 Sellmeier)', formula: 'SiO2' }, air: { label: 'Air / vacuum', formula: 'N2' }, custom: { label: 'Custom constant n + ik', formula: null },
 };
 function epsOf(name, lam, inp) {
   const E = 1239.84193 / lam, um = lam / 1000;
-  if (LD[name]) { const m = LD[name]; let e = C.sub(ONE, C.div(C.of(m.f[0] * m.wp * m.wp), C.mul(C.of(E), C.of(E, m.G[0])))); for (let j = 1; j < m.f.length; j++) e = C.add(e, C.div(C.of(m.f[j] * m.wp * m.wp), C.of(m.w[j] * m.w[j] - E * E, -E * m.G[j]))); return e; }
+  if (LD[name]) { const m = LD[name], ld = (() => { let e = C.sub(ONE, C.div(C.of(m.f[0] * m.wp * m.wp), C.mul(C.of(E), C.of(E, m.G[0])))); for (let j = 1; j < m.f.length; j++) e = C.add(e, C.div(C.of(m.f[j] * m.wp * m.wp), C.of(m.w[j] * m.w[j] - E * E, -E * m.G[j]))); return e; })();
+    // silver: tabulated Johnson & Christy constants inside their range (the Lorentz–Drude fit is too smooth at the 3.8 eV interband edge and
+    // places Re ε = −2 at 368 nm instead of 354 nm); blended into the Lorentz–Drude fit over the outermost table interval at each end
+    if (name === 'Ag' && E > 0.64 && E < 6.6) { const jc = jcAg(E), w = Math.min(1, (E - 0.64) / 0.13, (6.6 - E) / 0.13); return { re: w * jc.re + (1 - w) * ld.re, im: w * jc.im + (1 - w) * ld.im }; }
+    return ld; }
   if (name === 'ITO') return C.sub(C.of(3.9), C.div(C.of(1.9 * 1.9), C.mul(C.of(E), C.of(E, 0.12))));
   let n = 1, k = 0; const u = Math.max(um, 0.4), l2 = u * u;
   if (name === 'Si') { n = Math.sqrt(sell(l2, [[10.6684293, 0.301516485 ** 2], [1.54133408, 1104 ** 2]])); k = E > 1.12 ? 4.6e5 * (E - 1.12) ** 2 * lam * 1e-9 / (4 * PI) : 0; }

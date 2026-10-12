@@ -419,7 +419,9 @@ function runTPMS(v) {
   const warnings = [], a = v.cell, sheet = v.tpmsMode === 'sheet', graded = abs(v.rdTo - v.rd) > 1e-6, res = 24, [u, s] = unitOf(a);
   const g = implicit.tpmsVoxels({ type: v.tpmsType, cells: [2, 2, graded ? 3 : 2], resolution: res, relDensity: v.rd, mode: v.tpmsMode, grading: graded ? { axis: 'z', from: v.rd, to: v.rdTo } : undefined, cellSize_mm: a * s });
   const uni = graded ? implicit.tpmsVoxels({ type: v.tpmsType, cells: [2, 2, 2], resolution: res, relDensity: v.rd, mode: v.tpmsMode }) : g;
-  const h = a / uni.resolution, st = voxSurface(uni), nTot = uni.nx * uni.ny * uni.nz, rho = uni.relDensity, Sv = st.faces * h * h * 2 / 3 / (nTot * h ** 3);   // 1/m
+  const h = a / uni.resolution, st = voxSurface(uni), nTot = uni.nx * uni.ny * uni.nz, rho = uni.relDensity, SvFace = st.faces * h * h * 2 / 3 / (nTot * h ** 3);   // 1/m, first-order face count
+  // surface from the two-point statistics of one cell sampled at twice the resolution (13 directions, extrapolated to zero lag)
+  const fine = implicit.tpmsVoxels({ type: v.tpmsType, cells: [1, 1, 1], resolution: 2 * res, relDensity: v.rd, mode: v.tpmsMode }), Sv = max(1e-30, implicit.twoPointSurface(fine.data, fine.nx, fine.ny, fine.nz) * fine.resolution / a);
   const wall = sheet ? 2 * rho / Sv : 4 * rho / Sv, pore = 4 * (1 - rho) / Sv, wallChord = st.solidChord * h, poreChord = st.poreChord * h, ssaMass = Sv / (rho * v.rhos);
   // level set ↔ relative density from the sampled field of one cell
   const fn = implicit.TPMS[v.tpmsType], ns = 22, vals = new Float64Array(ns ** 3); let p = 0;
@@ -438,7 +440,7 @@ function runTPMS(v) {
     chk('Wall resolved by the voxel grid (≥ 2 voxels)', wall / h >= 2, `wall / voxel = ${F(wall / h, 3)}; thinner walls are under-resolved and the surface estimate degrades`),
     chk('Both phases continuous (self-supporting, drainable)', rho > 0.03 && rho < 0.97, sheet ? 'sheet TPMS: one connected wall separating two interpenetrating channel networks' : 'network TPMS: one solid labyrinth and one channel labyrinth'),
   ];
-  if (areaComparable) checks.push(chk('Surface area against the minimal-surface reference', abs(SvA / expect - 1) < 0.2, `S_v·a = ${F(SvA, 4)} (voxel faces × 2/3) against ${sheet ? '2 × ' : ''}${A0} = ${F(expect, 4)} for the ${sheet ? 'two faces of a thin sheet' : 'mid-level surface'}`));
+  if (areaComparable) checks.push(chk('Surface area against the minimal-surface reference', abs(SvA / expect - 1) < 0.2, `S_v·a = ${F(SvA, 4)} (two-point estimator) against ${sheet ? '2 × ' : ''}${A0} = ${F(expect, 4)} for the ${sheet ? 'two faces of a thin sheet' : 'mid-level surface'}`));
   if (wall / h < 2) warnings.push('The wall is thinner than two voxels: surface area and wall thickness are under-resolved. Raise the relative density or treat the values as indicative.');
   if (pore < 3 * pr.p.res && !pr.p.planar) warnings.push(`Channels of ${len(pore)} are less than three times the process feature size: trapped powder or resin will be hard to remove.`);
   if (pr.p.planar) warnings.push(`${pr.p.name} is a planar process and cannot produce a three-dimensional TPMS directly.`);
@@ -449,7 +451,7 @@ function runTPMS(v) {
     kpis: [
       kpi('rho', 'Relative density', rho, '–', `Solid voxel fraction achieved = ${F(rho, 4)}; the threshold is set by the quantile of the sampled level-set field so the target is met to within one voxel count.`),
       kpi('level', 'Level-set threshold c', level, '–', `${sheet ? 'Solid where |f| ≤ c' : 'Solid where f ≤ c'}: c = ${F(level, 4)} on a field whose ${sheet ? 'magnitude' : 'value'} reaches ${F(fmax, 3)}. The curve of c against density is given below for other targets.`),
-      kpi('Sv', 'Surface area per volume', Sv, '1/m', `Solid–void interface area per unit bulk volume = ${F(Sv, 4)} m²/m³ (voxel face count × 2/3), i.e. ${F(SvA, 4)}/a; it scales inversely with cell size. Per unit solid mass: ${F(ssaMass, 4)} m²/kg.`),
+      kpi('Sv', 'Surface area per volume', Sv, '1/m', `Solid–void interface area per unit bulk volume = ${F(Sv, 4)} m²/m³ (two-point estimator S_v = −4·dS₂/dr along 13 lattice directions on one cell at ${fine.resolution} voxels per edge, extrapolated to zero lag; the first-order voxel face count × 2/3 gives ${F(SvFace, 4)}), i.e. ${F(SvA, 4)}/a; it scales inversely with cell size. Per unit solid mass: ${F(ssaMass, 4)} m²/kg.`),
       kpi('wall', sheet ? 'Mean wall thickness' : 'Mean strut diameter', wall, 'm', `${sheet ? '2ρ̄/S_v (solid volume over half the surface)' : '4ρ̄/S_v (equivalent cylinder)'} = ${len(wall)}; the mean solid chord along the axes is ${len(wallChord)}.`, pr.ok),
       kpi('pore', 'Channel (pore) size', pore, 'm', `Hydraulic diameter of the void, 4(1 − ρ̄)/S_v = ${len(pore)}; mean void chord ${len(poreChord)}. It governs permeability, cell ingrowth and powder removal.`),
       kpi('Erel', 'Relative modulus E*/E_s', Erel, '–', `Empirical power law C·ρ̄ⁿ with C = ${F(v.plC, 3)}, n = ${F(v.plN, 3)} gives ${F(pw(rho), 4)}; the Hashin–Shtrikman upper bound is ${F(hs.E / v.Es, 4)}. The power law is a fit form to be calibrated on tests, not a prediction from first principles.`),
@@ -482,7 +484,7 @@ function runTPMS(v) {
       { name: `tpms_${v.tpmsType}_${g.nx}x${g.ny}x${g.nz}_uint8.raw`, mime: 'application/octet-stream', bytes: new Uint8Array(g.data), description: `Voxel model (1 = solid), x fastest, voxel ${F(g.voxel, 4)} ${u}.` },
       { name: 'tpms_design.json', mime: 'application/json', content: JSON.stringify({ type: v.tpmsType, mode: v.tpmsMode, cell_size_m: a, relative_density: rho, level_set_threshold: level, surface_per_volume_per_m: Sv, wall_m: wall, pore_m: pore, E_rel: Erel, grading: graded ? { axis: 'z', from: v.rd, to: v.rdTo } : null, dims: [g.nx, g.ny, g.nz], voxel_m: g.voxel / s }, null, 1), description: 'Design parameters and descriptors of the TPMS structure.' },
     ],
-    numerics: { method: 'Level-set voxelisation with quantile thresholding; face-count surface area (× 2/3); empirical power law bounded by Hashin–Shtrikman', dof: g.nx * g.ny * g.nz, steps: 1, iterations: 1, residual: abs(rho - v.rd), notes: `${uni.resolution} voxels per cell; surface-area error about ±10 %.` },
+    numerics: { method: 'Level-set voxelisation with quantile thresholding; two-point surface-area estimator (13 lattice directions, extrapolated to zero lag) on one cell at twice the resolution; empirical power law bounded by Hashin–Shtrikman', dof: g.nx * g.ny * g.nz, steps: 1, iterations: 1, residual: abs(rho - v.rd), notes: `${uni.resolution} voxels per cell for the model, ${fine.resolution} for the surface estimate; surface-area error about 1–2 % while the wall spans at least four fine voxels, larger for thinner walls.` },
   };
 }
 
@@ -522,7 +524,7 @@ function resEM(v, warnings) {
     kpi('Q', 'Quality factor (ohmic)', Q, '–', `ω₀L/R with the ring resistance ${F(Rr, 3)} Ω limited by the skin depth ${len(skin)} = ${F(Q, 4)}. Radiation and dielectric loss are not included, so real values are lower.`, Q > 20),
     kpi('F', 'Magnetic filling factor F', Fm, '–', `μ₀A²/(L·V_cell) with loop area ${F(lm * lm * 1e6, 3)} mm² and cell volume a³ = ${F(Fm, 4)}; it sets the strength and width of the magnetic response.`),
     kpi('fmp', 'Magnetic plasma frequency', fmp, 'Hz', `f₀/√(1 − F) = ${freq(fmp)}: upper edge of the lossless negative-μ band, giving a fractional bandwidth of ${F((fmp - f0) / f0 * 100, 3)} %.`));
-  if (hasW) kpis.push(kpi('fp', 'Wire-medium plasma frequency', fp, 'Hz', `Effective plasma frequency of the wire array, (c/a)/√(2π(ln(a/(2πr)) + 0.5275)) = ${freq(fp)} (the simpler ln(a/r) form gives ${freq(fpP)}). Below it Re ε < 0 for fields along the wires. Collision frequency ${freq(gE)}.`));
+  if (hasW) kpis.push(kpi('fp', 'Wire-medium plasma frequency', fp, 'Hz', `Effective plasma frequency of the wire array, (c/a)/√(2π(ln(a/(2πr)) + 0.5275)) = ${freq(fp)} (the simpler ln(a/r) form gives ${freq(fpP)}). Below it Re ε < 0 for fields along the wires. Collision frequency ${freq(gE)}.`), kpi('fp_pendry', 'Wire-medium plasma frequency (leading-order logarithm)', fpP, 'Hz', `Pendry's original estimate (c/a)/√(2π ln(a/r)) = ${freq(fpP)}. It keeps only the leading logarithm of the wire inductance; the refined lattice sum used for the main value replaces ln(a/r) by ln(a/(2πr)) + 0.5275 and is ${F(100 * (fp / fpP - 1), 3)} % higher here. Quoted for comparison with values calculated from the original formula.`));
   kpis.push(
     kpi('band_lo', `Lower edge of the ${bandName}`, band ? band[0] : 0, 'Hz', band ? `From the complex effective parameters including loss: the ${bandName} starts at ${freq(band[0])}.` : `No ${bandName} exists for this geometry; zero is reported.`, !!band),
     kpi('band_hi', `Upper edge of the ${bandName}`, band ? band[1] : 0, 'Hz', band ? `The ${bandName} ends at ${freq(band[1])}; relative width ${F((band[1] - band[0]) / max(1e-300, (band[1] + band[0]) / 2) * 100, 3)} %.` : `No ${bandName} exists for this geometry; zero is reported.`, !!band),

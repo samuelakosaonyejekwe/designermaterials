@@ -214,7 +214,7 @@ function runAlloc(inp) {
   const it = parseStack(inp.stack), W = [], ks = Math.max(inp.kSigma, 0.5), r = N.rng(inp.seed ?? 1);
   if (String(inp.stack).trim() === STACK_DEF) W.push('Illustrative demonstration data in the tolerance table — replace with the tolerances of your own drawing or process capability study.');
   const nom = N.sum(it.map(c => c.sens * c.nom)), wc = N.sum(it.map(c => Math.abs(c.sens) * c.tol)), varc = it.map(c => (c.sens * c.tol / ks) ** 2), sig = Math.sqrt(N.sum(varc)), rss = ks * sig, lim = inp.stackLimit;
-  const nMc = 4000, sm = new Array(nMc); let out = 0; for (let k = 0; k < nMc; k++) { let d = 0; for (const c of it) d += c.sens * r.normal(0, c.tol / ks); sm[k] = d; if (Math.abs(d) > lim) out++; }
+  const nMc = Math.round(N.clamp(2e6 / it.length, 4000, 40000)), sm = new Array(nMc); /* up to 40 000 assemblies, fewer for long tolerance tables */ let out = 0; for (let k = 0; k < nMc; k++) { let d = 0; for (const c of it) d += c.sens * r.normal(0, c.tol / ks); sm[k] = d; if (Math.abs(d) > lim) out++; }
   const pAn = sig > 0 ? 2 * (1 - N.normCdf(lim / sig)) : 0, cp = sig > 0 ? lim / (3 * sig) : 99, h = N.histogram(sm, 30), dom = N.argmax(varc), vs = N.sum(varc) || 1;
   // strength margin and reliability index
   const cap = inp.cap, dem = Math.max(inp.dem, 1e-300), allow = inp.derate * cap, fos = cap / dem, fosD = allow / dem, mos = allow / (inp.fosReq * dem) - 1, sR = inp.covCap / 100 * cap, sS = inp.covDem / 100 * dem, sd = Math.hypot(sR, sS), beta = sd > 0 ? (cap - dem) / sd : (cap >= dem ? 99 : -99), pf = N.clamp(N.normCdf(-beta), 0, 1);

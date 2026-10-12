@@ -134,15 +134,15 @@ export default [
   },
   {
     id: 's04-boolean-model-surface', suite: 4, title: 'Overlapping-sphere microstructure: specific surface of the Boolean model', mode: 'porous',
-    inputs: { mode: 'porous', material: 'ZnO', pType: 'randomSpheres', phi: phiB, feat: DB, featVox: 9, pN: 36, seed: 1 }, kpi: 'ssa', expected: SvB / (RHO.ZnO * (1 - phiB)) / 1e3, tol: 0.1, kind: 'analytical',
+    inputs: { mode: 'porous', material: 'ZnO', pType: 'randomSpheres', phi: phiB, feat: DB, featVox: 12, pN: 48, seed: 1 }, kpi: 'ssa_ens', expected: SvB / (RHO.ZnO * (1 - phiB)) / 1e3, tol: 0.03, kind: 'analytical',
     reference: 'Fully penetrable spheres: S_v = −(6/D)·φ·ln φ (Torquato, Random Heterogeneous Materials)',
-    note: 'The suite measures the surface on a voxel grid with 9 voxels per sphere diameter and four diameters per edge; lens-shaped contacts thinner than a voxel are lost, so the area is underestimated by about 7 % at this resolution (the suite quotes ±10 % for voxel surface estimates).',
+    note: 'Mean over twelve seeded 48³ volumes at the finest resolution the suite offers (12 voxels per sphere diameter). The surface is taken from the two-point function along 13 lattice directions extrapolated to zero lag (S_v = −4·dS₂/dr); the ensemble standard error is about 0.8 % (KPI ssa_se) and the truncation error about −1 %. At 9 voxels per diameter the truncation error grows to about −2 %, and a single volume scatters by about 3 %.',
   },
   {
     id: 's04-kozeny-carman-boolean', suite: 4, title: 'Kozeny–Carman permeability of the overlapping-sphere medium', mode: 'porous',
-    inputs: { mode: 'porous', material: 'ZnO', pType: 'randomSpheres', phi: phiB, feat: DB, featVox: 9, pN: 36, seed: 1 }, kpi: 'k', expected: phiB ** 3 / (5 * SvB * SvB), tol: 0.15, kind: 'analytical',
+    inputs: { mode: 'porous', material: 'ZnO', pType: 'randomSpheres', phi: phiB, feat: DB, featVox: 12, pN: 48, seed: 1 }, kpi: 'k_ens', expected: phiB ** 3 / (5 * SvB * SvB), tol: 0.04, kind: 'analytical',
     reference: 'Kozeny–Carman equation k = φ³/(5·S_v²) with the Boolean-model specific surface (Carman; Torquato, Random Heterogeneous Materials)',
-    note: 'k depends on 1/S_v², so the 7 % voxel underestimate of the surface area appears as about +12 % in permeability; the tolerance reflects that documented resolution limit.',
+    note: 'k depends on 1/S_v², so the standard error (about 0.8 %) and truncation error (about −1 %) of the ensemble surface area appear doubled in the permeability.',
   },
   {
     id: 's04-rsa-jamming-coverage', suite: 4, title: 'Random sequential adsorption of discs: jamming coverage', mode: 'aggregate',
@@ -152,9 +152,9 @@ export default [
   },
   {
     id: 's04-dla-fractal-dimension', suite: 4, title: 'Three-dimensional diffusion-limited aggregation: fractal dimension', mode: 'aggregate',
-    inputs: { mode: 'aggregate', aggType: 'dla', nPart: 1500, stick: 1, seed: 1 }, kpi: 'Df', expected: 2.5, tol: 0.1, kind: 'numerical-reference',
+    inputs: { mode: 'aggregate', aggType: 'dla', nPart: 1500, stick: 1, seed: 1 }, kpi: 'Df', expected: 2.5, tol: 0.05, kind: 'numerical-reference',
     reference: 'Particle–cluster DLA in three dimensions, D_f ≈ 2.5 (Witten & Sander; Meakin)',
-    note: 'A single on-lattice cluster of 1500 particles: radius-of-gyration fits scatter by about ±0.12 between seeds and are biased low by the limited scaling range; the asymptotic value needs far larger clusters.',
+    note: 'Ensemble fit over twelve seeded on-lattice clusters of 1500 particles, window R_g ≥ 4 lattice spacings (about one decade in N). Other seeds give 2.40–2.50 with a standard error of about 0.04 (KPI Df_se); the short scaling range biases the value low by 1–2 %, and the asymptotic value needs far larger clusters.',
   },
   {
     id: 's04-film-areal-mass', suite: 4, title: 'Areal mass of a ZnO / Al₂O₃ / TiO₂ stack', mode: 'film',

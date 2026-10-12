@@ -91,7 +91,7 @@ const inputs = [
   { key: 'phi', label: 'Target porosity', unit: '–', value: 0.25, min: 0.05, max: 0.9, group: 'Porous medium', showIf: SH('porous'), help: 'Pore volume fraction requested from the generator. The achieved value is reported and published.' },
   { key: 'feat', label: 'Feature size', unit: 'm', value: 2e-8, min: 2e-9, max: 1e-5, log: true, group: 'Porous medium', showIf: SH('porous'), help: 'Grain or fibre diameter, correlation length or foam cell size. Specific surface scales as 1/feature size and permeability as its square.' },
   { key: 'featVox', label: 'Voxels per feature', unit: '–', value: 7, min: 3, max: 12, step: 1, group: 'Porous medium', sens: false, showIf: SH('porous'), help: 'Spatial resolution of the voxel grid. Fewer than about five voxels per feature degrades the surface-area and tortuosity estimates.' },
-  { key: 'pN', label: 'Grid size per edge', unit: 'voxels', value: 28, min: 16, max: 36, step: 2, group: 'Porous medium', sens: false, showIf: SH('porous'), help: 'Edge length of the cubic representative volume element in voxels. The RVE should span at least four to five features.' },
+  { key: 'pN', label: 'Grid size per edge', unit: 'voxels', value: 28, min: 16, max: 48, step: 2, group: 'Porous medium', sens: false, showIf: SH('porous'), help: 'Edge length of the cubic representative volume element in voxels. The RVE should span at least four to five features.' },
   { key: 'aggType', label: 'Aggregation / packing model', type: 'select', value: 'dla', group: 'Aggregate', showIf: SH('aggregate'), options: [{ value: 'dla', label: 'Diffusion-limited aggregation (3-D lattice, particle–cluster)' }, { value: 'rsa', label: 'Random sequential adsorption of discs on a surface' }], help: 'DLA grows a fractal cluster from random walkers; RSA deposits non-overlapping particles irreversibly on a surface up to the jamming limit.' },
   { key: 'nPart', label: 'Primary particles in the aggregate', unit: '–', value: 600, min: 20, max: 1500, step: 10, group: 'Aggregate', showIf: SH('aggregate'), help: 'Number of primary particles grown into the DLA cluster. More particles give a better estimate of the fractal dimension.' },
   { key: 'stick', label: 'Sticking probability', unit: '–', value: 1, min: 0.05, max: 1, group: 'Aggregate', showIf: SH('aggregate'), help: 'Probability that a walker touching the cluster sticks. Values below one let particles penetrate and give denser clusters (towards reaction-limited behaviour).' },
@@ -467,6 +467,9 @@ function runPorous(v) {
   const cvOf = a => { const m = N.mean(a); return m ? N.std(a) / abs(m) : 0; };
   const rP = reps.map(r => r.porosity), rS = reps.map(r => r.ssa * 1e6), rT = reps.map(r => r.tortuosity).filter(q => q > 0), cvP = cvOf(rP), cvS = cvOf(rS), cvT = rT.length > 1 ? cvOf(rT) : 0;
   const spanF = n / fs, adequate = spanF >= 4 && cvP < 0.03 && cvS < 0.05 && cvT < 0.2;
+  // ensemble of twelve seeded volumes (the three above plus nine generated for porosity and surface only): mean and standard error
+  const ens = [...reps]; for (let q = 3; q < 12; q++) ens.push(implicit.porousMedium({ type: v.pType, size: [n, n, n], porosity: v.phi, featureSize: fs, seed: v.seed + 101 * q, voxel_um: vox * 1e6, light: true }));
+  const eS = ens.map(r => r.ssa * 1e6), eP = ens.map(r => r.porosity), SvE = max(1e-30, N.mean(eS)), phiE = N.mean(eP), seS = N.std(eS) / sqrt(ens.length) / SvE, ssaE = SvE / (mat.rho * max(1e-9, 1 - phiE)), kE = phiE ** 3 / (5 * SvE * SvE);
   const checks = [
     chk('Achieved porosity matches the target', abs(phi - v.phi) < 0.03, `achieved ${F(phi, 4)} against target ${F(v.phi, 4)}`),
     chk('Pore space percolates in all three directions', nPerc === 3, `percolation x/y/z: ${perc.x}/${perc.y}/${perc.z} (6-connected flood fill)`),
@@ -482,11 +485,14 @@ function runPorous(v) {
     summary: `A ${n}³-voxel ${DEF.pType.options.find(o => o.value === v.pType).label.toLowerCase()} microstructure of ${mat.pretty} with ${F(nm(v.feat), 3)} nm features has porosity ${F(phi, 3)} and ${F(ssa / 1e3, 4)} m²/g of internal surface. The pore space ${nPerc === 3 ? 'percolates in all directions' : `percolates in ${nPerc} of 3 directions`}, with a tortuosity factor of ${F(tau, 3)}${tauW ? '' : ' (Bruggeman estimate)'}, an effective diffusivity ratio D_eff/D₀ of ${F(tauW ? dWalk : dBrug, 3)} and a Kozeny–Carman permeability of ${F(kKC, 3)} m². Across three seeds the porosity varies by ${F(cvP * 100, 2)} % and the surface area by ${F(cvS * 100, 2)} %.`,
     kpis: [
       kpi('phi', 'Porosity', phi, '–', `Pore-voxel fraction of the generated volume = ${F(phi, 4)} (target ${F(v.phi, 3)}). It is the void volume available to fluid.`, abs(phi - v.phi) < 0.03),
-      kpi('ssa', 'Specific surface area', ssa / 1e3, 'm²/g', `Interfacial area per bulk volume S_v = ${F(Sv, 3)} 1/m (voxel face count × 2/3) divided by ρ(1 − φ) = ${F(ssa / 1e3, 4)} m²/g. The 2/3 factor corrects the staircase overestimate for an isotropic surface.`),
+      kpi('ssa', 'Specific surface area', ssa / 1e3, 'm²/g', `Interfacial area per bulk volume S_v = ${F(Sv, 3)} 1/m (two-point estimator S_v = −4·dS₂/dr along 13 lattice directions, extrapolated to zero lag from one and two lattice steps) divided by ρ(1 − φ) = ${F(ssa / 1e3, 4)} m²/g. The first-order voxel face count × 2/3 gives ${F((g.ssaFaceCount ?? g.ssa) * 1e6, 3)} 1/m; it reads low when necks and gaps approach the voxel size.`),
+      kpi('ssa_ens', 'Specific surface area (ensemble mean)', ssaE / 1e3, 'm²/g', `Mean S_v over ${ens.length} independently seeded volumes of the same statistics (${F(SvE, 3)} 1/m) divided by ρ(1 − ⟨φ⟩); its standard error is ${F(seS * 100, 2)} %. Use this value when comparing with theory or with a measurement on a macroscopic sample.`),
+      kpi('ssa_se', 'Standard error of the ensemble surface area', seS * 100, '%', `Sample standard deviation of S_v over the ${ens.length} volumes divided by √${ens.length}; a single volume of this size scatters by about ${F(seS * sqrt(ens.length) * 100, 2)} %.`),
       kpi('chord', 'Mean pore chord length', chord, 'm', `Mean length of line intercepts through the pore phase along x, y and z = ${F(nm(chord), 4)} nm, a direct measure of pore size; the hydraulic diameter 4φ/S_v is ${F(nm(dH), 4)} nm.`),
       kpi('tau', 'Tortuosity factor', tau, '–', tauW ? `τ = D₀/D_pore from a lattice random walk in the pore space = ${F(tauW, 4)} (statistical scatter about ±15 %). The Bruggeman estimate φ^(−1/2) is ${F(tauB, 4)}${tauGm ? ` and the geometric shortest-path tortuosity ${F(tauGm, 4)}` : ''}.` : `The pore space does not percolate, so the Bruggeman estimate φ^(−1/2) = ${F(tauB, 4)} is quoted for an open network of the same porosity.`, tau < 3),
       kpi('Deff', 'Effective diffusivity ratio D_eff/D₀', tauW ? dWalk : dBrug, '–', `φ/τ = ${F(tauW ? dWalk : dBrug, 4)}${tauW ? ` from the random-walk tortuosity; the Bruggeman relation φ^1.5 gives ${F(dBrug, 4)}` : ' from the Bruggeman relation φ^1.5'}. Multiply by the bulk (or Knudsen-corrected) diffusivity to obtain the effective value.`),
       kpi('k', 'Permeability (Kozeny–Carman)', kKC, 'm²', `k = φ³/(5 S_v²) = ${F(kKC, 3)} m² with the Kozeny constant 5. It is an order-of-magnitude estimate for a connected, roughly isotropic pore space.`),
+      kpi('k_ens', 'Permeability (Kozeny–Carman, ensemble mean)', kE, 'm²', `φ³/(5 S_v²) evaluated with the mean porosity ${F(phiE, 4)} and mean S_v of the ${ens.length} seeded volumes; the standard error of S_v enters twice (about ${F(2 * seS * 100, 2)} %).`),
       kpi('perc', 'Percolating directions', nPerc, 'of 3', `Number of axes along which the pore phase connects opposite faces (x: ${perc.x}, y: ${perc.y}, z: ${perc.z}). Transport across the sample needs percolation along the transport direction.`, nPerc === 3),
       kpi('rve', 'RVE porosity variation across seeds', cvP * 100, '%', `Coefficient of variation of porosity over three independently seeded volumes of the same size = ${F(cvP * 100, 3)} %; surface area varies by ${F(cvS * 100, 3)} %. Values below a few per cent indicate a representative volume.`, adequate),
     ],
@@ -497,7 +503,7 @@ function runPorous(v) {
     tables: [{ key: 'rve', title: 'Representative-volume study (three seeds)', columns: ['Seed', 'Porosity', 'S_v (1/µm)', 'Tortuosity factor', 'Percolates x/y/z'], rows: reps.map(r => [r.seed, +r.porosity.toFixed(4), +r.ssa.toPrecision(4), r.tortuosity ? +r.tortuosity.toPrecision(4) : 'none', `${r.percolates.x ? 'y' : 'n'}/${r.percolates.y ? 'y' : 'n'}/${r.percolates.z ? 'y' : 'n'}`]), explain: 'The same generator run with three seeds on the same grid. Scatter between rows is the statistical uncertainty of a single volume of this size; it shrinks as the volume grows relative to the feature size.' }],
     equations: [
       matEq(mat),
-      eqn('formula', 'Porosity and specific surface', 'φ = V_pore/V;  S_v = (2/3)·N_faces·h²/V;  SSA = S_v/(ρ(1 − φ));  d_h = 4φ/S_v'),
+      eqn('formula', 'Porosity and specific surface', 'φ = V_pore/V;  S_v = −4·dS₂/dr|₀ ≈ Σₖ wₖ[4C(dₖ) − C(2dₖ)]/|dₖ| over 13 lattice directions,  C(r) = P(phase change over r);  SSA = S_v/(ρ(1 − φ));  d_h = 4φ/S_v'),
       eqn('constitutive', 'Kozeny–Carman permeability', 'k = φ³ / (c_K S_v²),  c_K = 5'),
       eqn('constitutive', 'Effective diffusivity', 'D_eff = D₀ φ/τ;  Bruggeman: τ = φ^(−1/2), D_eff/D₀ = φ^1.5'),
       eqn('governing', 'Tortuosity from a pore-space random walk', 'τ = D₀/D_pore = lim t/⟨r²(t)⟩  (lattice walkers, periodic wrapping)'),
@@ -517,40 +523,53 @@ function runPorous(v) {
       { name: 'porous_metadata.json', mime: 'application/json', content: JSON.stringify({ dims: [n, n, n], voxel_m: vox, model: g.model, seed: v.seed, porosity: phi, Sv_per_m: Sv, ssa_m2_per_g: ssa / 1e3, tortuosity_factor: tauW, permeability_m2: kKC, percolates: perc }, null, 1), description: 'Grid description and computed descriptors for the raw voxel file.' },
       { name: 'pore_chords.csv', mime: 'text/csv', content: 'chord_nm,length_weighted_fraction\n' + cX.map((x, i) => `${x.toPrecision(5)},${(cY[i] / 100).toPrecision(5)}`).join('\n') + '\n', description: 'Pore chord-length distribution.' },
     ],
-    numerics: { method: `Stochastic voxel generation (${g.model}); face-count surface area; flood-fill percolation; lattice random walk for tortuosity`, dof: n ** 3, steps: 3, iterations: 3, residual: abs(phi - v.phi), notes: `Voxel ${F(nm(vox), 4)} nm, ${fs} voxels per feature. Three seeds for the representative-volume indicator.` },
+    numerics: { method: `Stochastic voxel generation (${g.model}); two-point surface-area estimator extrapolated to zero lag (ensemble of twelve seeds); flood-fill percolation; lattice random walk for tortuosity`, dof: n ** 3, steps: 3, iterations: 3, residual: abs(phi - v.phi), notes: `Voxel ${F(nm(vox), 4)} nm, ${fs} voxels per feature. Three seeds for the representative-volume indicator.` },
   };
 }
 
 // ---------------------------------------------------------------- aggregates and packing
 const PACK_REF = [['Random sequential adsorption of discs on a plane (jamming)', 0.547, '2-D'], ['Random close packing of discs', 0.84, '2-D'], ['Hexagonal close packing of discs', 0.9069, '2-D'], ['Random sequential adsorption of spheres in a volume', 0.38, '3-D'], ['Random loose packing of spheres', 0.55, '3-D'], ['Random close packing of spheres', 0.64, '3-D'], ['Face-centred cubic / hexagonal close packing', 0.7405, '3-D']];
 function runDLA(v, mat, warnings) {
-  const rand = N.rng(v.seed), G = 161, c = 80, occ = new Uint8Array(G * G * G), id = (x, y, z) => x + G * (y + G * z), target = round(v.nPart);
-  const P = [[c, c, c]]; occ[id(c, c, c)] = 1;
-  let rmax = 0, steps = 0, sx = c, sy = c, sz = c, s2 = 3 * c * c; const budget = 4e6, rgN = [], rgR = []; let nextRec = 8;
+  const G = 161, c = 80, id = (x, y, z) => x + G * (y + G * z), target = round(v.nPart), budget = 4e6;
   const NB = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
-  outer: while (P.length < target && rmax < 34) {
-    const Rl = rmax + 4, Rk2 = min(78, 2 * Rl + 6) ** 2, near2 = (rmax + 2) ** 2; let x, y, z;
-    const launch = () => { const u = 2 * rand() - 1, a = 2 * PI * rand(), s = sqrt(1 - u * u); x = round(c + Rl * s * cos(a)); y = round(c + Rl * s * sin(a)); z = round(c + Rl * u); };
-    launch();
-    for (;;) {
-      if (++steps > budget) break outer;
-      const m = NB[(rand() * 6) | 0], far = sqrt((x - c) ** 2 + (y - c) ** 2 + (z - c) ** 2) - rmax - 2, st = far > 2 ? floor(far) : 1;   // long jumps while far from the cluster
-      const X = x + st * m[0], Y = y + st * m[1], Z = z + st * m[2], r2 = (X - c) ** 2 + (Y - c) ** 2 + (Z - c) ** 2;
-      if (r2 > Rk2) { launch(); continue; }
-      if (occ[id(X, Y, Z)]) continue;
-      x = X; y = Y; z = Z;
-      if (r2 <= near2 && (occ[id(x + 1, y, z)] || occ[id(x - 1, y, z)] || occ[id(x, y + 1, z)] || occ[id(x, y - 1, z)] || occ[id(x, y, z + 1)] || occ[id(x, y, z - 1)]) && rand() < v.stick) {
-        occ[id(x, y, z)] = 1; P.push([x, y, z]); rmax = max(rmax, sqrt(r2)); sx += x; sy += y; sz += z; s2 += x * x + y * y + z * z;
-        if (P.length >= nextRec || P.length === target) { const n = P.length; rgN.push(n); rgR.push(sqrt(max(1e-12, s2 / n - (sx / n) ** 2 - (sy / n) ** 2 - (sz / n) ** 2))); nextRec = Math.ceil(nextRec * 1.25); }
-        break;
+  // one seeded particle–cluster aggregate; R_g is recorded on a fixed geometric grid of particle numbers
+  const grow = (seed, maxSteps) => {
+    const rand = N.rng(seed), occ = new Uint8Array(G * G * G), P = [[c, c, c]]; occ[id(c, c, c)] = 1;
+    let rmax = 0, steps = 0, sx = c, sy = c, sz = c, s2 = 3 * c * c; const rgN = [], rgR = []; let nextRec = 8;
+    outer: while (P.length < target && rmax < 34) {
+      const Rl = rmax + 4, Rk2 = min(78, 2 * Rl + 6) ** 2, near2 = (rmax + 2) ** 2; let x, y, z;
+      const launch = () => { const u = 2 * rand() - 1, a = 2 * PI * rand(), s = sqrt(1 - u * u); x = round(c + Rl * s * cos(a)); y = round(c + Rl * s * sin(a)); z = round(c + Rl * u); };
+      launch();
+      for (;;) {
+        if (++steps > maxSteps) break outer;
+        const m = NB[(rand() * 6) | 0], far = sqrt((x - c) ** 2 + (y - c) ** 2 + (z - c) ** 2) - rmax - 2, st = far > 2 ? floor(far) : 1;   // long jumps while far from the cluster
+        const X = x + st * m[0], Y = y + st * m[1], Z = z + st * m[2], r2 = (X - c) ** 2 + (Y - c) ** 2 + (Z - c) ** 2;
+        if (r2 > Rk2) { launch(); continue; }
+        if (occ[id(X, Y, Z)]) continue;
+        x = X; y = Y; z = Z;
+        if (r2 <= near2 && (occ[id(x + 1, y, z)] || occ[id(x - 1, y, z)] || occ[id(x, y + 1, z)] || occ[id(x, y - 1, z)] || occ[id(x, y, z + 1)] || occ[id(x, y, z - 1)]) && rand() < v.stick) {
+          occ[id(x, y, z)] = 1; P.push([x, y, z]); rmax = max(rmax, sqrt(r2)); sx += x; sy += y; sz += z; s2 += x * x + y * y + z * z;
+          if (P.length >= nextRec || P.length === target) { const n = P.length; rgN.push(n); rgR.push(sqrt(max(1e-12, s2 / n - (sx / n) ** 2 - (sy / n) ** 2 - (sz / n) ** 2))); nextRec = Math.ceil(nextRec * 1.25); }
+          break;
+        }
       }
     }
-  }
-  const n = P.length; if (!rgN.length || rgN[rgN.length - 1] !== n) { rgN.push(n); rgR.push(sqrt(max(1e-12, s2 / n - (sx / n) ** 2 - (sy / n) ** 2 - (sz / n) ** 2))); }
+    const n = P.length; if (!rgN.length || rgN[rgN.length - 1] !== n) { rgN.push(n); rgR.push(sqrt(max(1e-12, s2 / n - (sx / n) ** 2 - (sy / n) ** 2 - (sz / n) ** 2))); }
+    return { P, occ, rgN, rgR, rmax, steps };
+  };
+  const main = grow(v.seed, budget), { P, occ, rgN, rgR, rmax, steps } = main, n = P.length;
   if (n < target) warnings.push(`The cluster stopped at ${n} of ${target} particles (${steps > budget ? 'walker step budget reached' : 'lattice radius limit reached'}).`);
   if (n < 150) warnings.push('Fewer than about 150 particles: the cluster is too small for a reliable fractal dimension; the fitted exponent is indicative only.');
-  const Rg = rgR[rgR.length - 1], i0 = rgN.findIndex(q => q >= 12), fitN = rgN.slice(max(0, i0)), fitR = rgR.slice(max(0, i0));
+  // ensemble of up to twelve independently seeded clusters of the same size (shared step budget); clusters that do not reach the size are left out
+  const ens = [main]; let ensSteps = 0;
+  for (let q = 1; q < 12 && ensSteps < 1.2e7; q++) { const g = grow(v.seed + 1009 * q, 1.2e7 - ensSteps); ensSteps += g.steps; if (g.P.length === n && g.rgN.length === rgN.length) ens.push(g); }
+  const mLn = rgN.map((_, i) => N.mean(ens.map(g => log(g.rgR[i])))), ensR = mLn.map(exp);
+  // scaling window: clusters of at least 12 particles whose mean radius of gyration exceeds four lattice spacings (if that leaves three points or more)
+  let win = rgN.map((_, i) => i).filter(i => rgN[i] >= 12 && ensR[i] >= 4); if (win.length < 3) win = rgN.map((_, i) => i).filter(i => rgN[i] >= 12); if (win.length < 3) win = rgN.map((_, i) => i);
+  const fitN = win.map(i => rgN[i]), fitR = win.map(i => ensR[i]), Rg = rgR[rgR.length - 1];
   const lr = fitN.length >= 3 ? N.linreg(fitR.map(log), fitN.map(log)) : { slope: NaN, intercept: 0, r2: 0 }, Df = fin(lr.slope, 0), k0 = exp(fin(lr.intercept));
+  const singles = fitN.length >= 3 ? ens.map(g => fin(N.linreg(win.map(i => log(g.rgR[i])), fitN.map(log)).slope, 0)) : [Df], Df1 = singles[0], DfSE = ens.length > 1 ? N.std(singles) / sqrt(ens.length) : 0;
+  if (ens.length < 12) warnings.push(`Only ${ens.length} of 12 ensemble clusters reached ${n} particles within the step budget; the ensemble-averaged fractal dimension rests on fewer clusters.`);
   if (Df > 3) warnings.push(`The fitted exponent ${F(Df, 3)} exceeds 3: at low sticking probability walkers fill the interior of a still-compact cluster, so it has not reached the fractal scaling regime. Grow more particles before quoting a fractal dimension.`);
   // box counting on the final cluster
   const bx = [], bc = []; for (let s = 1; s <= 32; s *= 2) { const set = new Set(); for (const p of P) set.add(floor(p[0] / s) + 512 * (floor(p[1] / s) + 512 * floor(p[2] / s))); bx.push(s); bc.push(set.size); }
@@ -562,19 +581,21 @@ function runDLA(v, mat, warnings) {
   for (const p of P) data[(p[0] - lo[0]) + dims[0] * ((p[1] - lo[1]) + dims[1] * (p[2] - lo[2]))] = 1;
   const d = v.d, ssa = 6 / (mat.rho * d), fitLine = fitR.map(r => k0 * r ** Df);
   return {
-    summary: `Diffusion-limited aggregation of ${n} primary particles of ${mat.pretty} (${F(nm(d), 3)} nm, sticking probability ${F(v.stick, 3)}) gives a cluster with radius of gyration ${F(nm(Rg * d), 4)} nm and a mass-fractal dimension of ${F(Df, 3)} from radius-of-gyration scaling (${F(Dbox, 3)} by box counting). Each particle touches ${F(coord, 3)} neighbours on average and the solid fills ${F(phiIn * 100, 3)} % of the equivalent sphere.`,
+    summary: `Diffusion-limited aggregation of ${n} primary particles of ${mat.pretty} (${F(nm(d), 3)} nm, sticking probability ${F(v.stick, 3)}) gives a cluster with radius of gyration ${F(nm(Rg * d), 4)} nm and a mass-fractal dimension of ${F(Df, 3)} ± ${F(DfSE, 2)} from radius-of-gyration scaling averaged over ${ens.length} seeded clusters (${F(Df1, 3)} for this cluster alone, ${F(Dbox, 3)} by box counting). Each particle touches ${F(coord, 3)} neighbours on average and the solid fills ${F(phiIn * 100, 3)} % of the equivalent sphere.`,
     kpis: [
-      kpi('Df', 'Fractal dimension (R_g scaling)', Df, '–', `Slope of ln N against ln R_g during growth = ${F(Df, 3)} (R² = ${F(lr.r2, 4)}). Particle–cluster DLA in three dimensions gives about 2.5; cluster–cluster (soot-like) aggregates about 1.8; compact packing 3.`, Df > 1 && Df <= 3.05),
+      kpi('Df', 'Fractal dimension (R_g scaling, ensemble)', Df, '–', `Slope of ln N against the ensemble mean of ln R_g over ${ens.length} independently seeded clusters, fitted over the scaling window N = ${fitN[0]}–${fitN[fitN.length - 1]} (R_g of at least four lattice spacings) = ${F(Df, 3)} (R² = ${F(lr.r2, 4)}). Particle–cluster DLA in three dimensions gives about 2.5; cluster–cluster (soot-like) aggregates about 1.8; compact packing 3.`, Df > 1 && Df <= 3.05),
+      kpi('Df_se', 'Standard error of the fractal dimension', DfSE, '–', ens.length > 1 ? `Standard deviation of the ${ens.length} single-cluster slopes on the same window divided by √${ens.length}. A single cluster of this size scatters by about ±${F(DfSE * sqrt(ens.length), 2)}.` : 'Only one cluster is available, so no sampling uncertainty can be estimated.'),
+      kpi('Df_single', 'Fractal dimension of the displayed cluster', Df1, '–', `Slope of ln N against ln R_g for the displayed cluster alone on the same window = ${F(Df1, 3)}; single clusters of this size are noisy, which is why the ensemble value is quoted.`),
       kpi('Dbox', 'Fractal dimension (box counting)', Dbox, '–', `Slope of ln N_box against ln(1/box size) on the final cluster = ${F(Dbox, 3)}. For clusters of this size box counting is biased low by the finite scaling range.`),
       kpi('Rg', 'Radius of gyration', Rg * d, 'm', `Root-mean-square distance of the primary particles from the centre of mass = ${F(Rg, 4)} particle diameters = ${F(nm(Rg * d), 4)} nm. It is the size measured by static light or X-ray scattering (Guinier regime).`),
       kpi('coord', 'Mean coordination number', coord, '–', `Average number of touching nearest neighbours per primary particle on the cubic lattice = ${F(coord, 3)} (maximum 6). Values near 2 indicate chain-like, open structures.`),
       kpi('k0', 'Fractal prefactor k₀', k0, '–', `Prefactor in N = k₀ (R_g/d)^D_f fitted with R_g in units of the particle diameter = ${F(k0, 3)}.`),
       kpi('phiIn', 'Packing fraction inside the equivalent sphere', phiIn, '–', `Solid volume of ${n} spheres divided by the sphere of radius (5/3)^(1/2) R_g = ${F(phiIn * 100, 3)} %. It falls with size for a fractal (D_f < 3), which is why aggregates are so voluminous.`),
-      kpi('n', 'Primary particles in the cluster', n, '–', `Number of particles aggregated out of ${target} requested, using ${F(steps, 3)} random-walk steps.`, n === target),
+      kpi('n', 'Primary particles in the cluster', n, '–', `Number of particles aggregated out of ${target} requested, using ${F(steps, 3)} random-walk steps (plus ${F(ensSteps, 3)} for the other ensemble clusters).`, n === target),
       kpi('ssa', 'Specific surface area (point contacts)', ssa / 1e3, 'm²/g', `6/(ρd) = ${F(ssa / 1e3, 4)} m²/g: an open aggregate with point contacts keeps the surface of its primary particles; sintered necks reduce it.`),
     ],
     series: [
-      { key: 'rg', title: 'Radius-of-gyration scaling N(R_g)', xlabel: 'R_g / d (–)', ylabel: 'number of particles N', logx: true, logy: true, lines: [{ name: 'growing cluster', x: rgR, y: rgN }, { name: `fit N = ${F(k0, 3)}·(R_g/d)^${F(Df, 3)}`, x: fitR, y: fitLine }], explain: 'A straight line on logarithmic axes shows mass-fractal scaling; its slope is the fractal dimension. Early points (few particles) are excluded from the fit.' },
+      { key: 'rg', title: 'Radius-of-gyration scaling N(R_g)', xlabel: 'R_g / d (–)', ylabel: 'number of particles N', logx: true, logy: true, lines: [{ name: 'displayed cluster', x: rgR, y: rgN }, { name: `ensemble mean (${ens.length} clusters)`, x: ensR, y: rgN }, { name: `fit N = ${F(k0, 3)}·(R_g/d)^${F(Df, 3)}`, x: fitR, y: fitLine }], explain: 'A straight line on logarithmic axes shows mass-fractal scaling; its slope is the fractal dimension. Early points (few particles, radius of gyration below four lattice spacings) are excluded from the fit.' },
       { key: 'box', title: 'Box counting of the final cluster', xlabel: 'box size (particle diameters)', ylabel: 'occupied boxes', logx: true, logy: true, lines: [{ name: 'occupied boxes', x: bx, y: bc }], explain: 'Number of boxes of a given size needed to cover the cluster. The negative slope over the scaling range estimates the fractal dimension; it flattens once the box approaches the cluster size.' },
     ],
     tables: [{ key: 'pack', title: 'Reference packing fractions', columns: ['Structure', 'Packing / coverage fraction', 'Dimension'], rows: PACK_REF, explain: 'Standard literature values for comparison with the open fractal aggregate: random and ordered packings of equal discs and spheres.' }],
@@ -601,7 +622,7 @@ function runDLA(v, mat, warnings) {
     ],
     publish: { 'geom.diameter': d, 'geom.ssa': ssa, 'geom.fractal_dimension': Df, 'geom.radius_gyration': Rg * d, 'geom.coordination': coord, 'geom.porosity': 1 - phiIn },
     exports: [{ name: 'dla_aggregate.xyz', mime: 'chemical/x-xyz', content: `${n}\nDLA aggregate; coordinates in nm (primary diameter ${F(nm(d), 4)} nm)\n` + P.map(p => `X ${((p[0] - c) * nm(d)).toPrecision(6)} ${((p[1] - c) * nm(d)).toPrecision(6)} ${((p[2] - c) * nm(d)).toPrecision(6)}`).join('\n') + '\n', description: 'Centres of the primary particles of the aggregate.' }],
-    numerics: { method: 'On-lattice particle–cluster diffusion-limited aggregation (simple cubic, 6-neighbour contact, launch and kill spheres)', dof: n, steps, iterations: n, residual: 1 - lr.r2, notes: 'Walkers take long lattice jumps while far from the cluster and are relaunched beyond the kill radius, which slightly biases the angular flux. Lattice anisotropy becomes visible only for much larger clusters.' },
+    numerics: { method: 'On-lattice particle–cluster diffusion-limited aggregation (simple cubic, 6-neighbour contact, launch and kill spheres); fractal dimension from the ensemble-averaged radius of gyration of up to twelve seeded clusters', dof: n, steps: steps + ensSteps, iterations: n, residual: 1 - lr.r2, notes: 'Walkers take long lattice jumps while far from the cluster and are relaunched beyond the kill radius, which slightly biases the angular flux. Lattice anisotropy becomes visible only for much larger clusters.' },
   };
 }
 function runRSA(v, mat, warnings) {

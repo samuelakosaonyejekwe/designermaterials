@@ -106,10 +106,10 @@ export default [
     reference: 'Gibson & Ashby, Cellular Solids — square cells loaded along the walls have no lateral coupling',
   },
   {
-    id: 's14-hexachiral-nu', suite: 14, title: 'Hexachiral lattice: ν → −1 (rigid-ring limit)', mode: 'lattice2d',
-    inputs: { mode: 'lattice2d', topology: 'chiral', cell_l: 10, wall_t: 0.05, r_R: 0.1, Es: ES, beam: 'euler' }, kpi: 'nu12', expected: -1.0, tol: 0.06, kind: 'analytical',
+    id: 's14-hexachiral-nu', suite: 14, title: 'Hexachiral lattice with nearly rigid rings: ν → −1', mode: 'lattice2d',
+    inputs: { mode: 'lattice2d', topology: 'chiral', cell_l: 10, wall_t: 0.05, r_R: 0.1, ring_t: 20, Es: ES, beam: 'euler' }, kpi: 'nu12', expected: -1.0, tol: 0.01, kind: 'analytical',
     reference: 'Prall & Lakes, Properties of a chiral honeycomb with a Poisson\'s ratio of −1',
-    note: 'The reference assumes rigid rings. The suite models each ring as a 12-sided polygon of beams with the ligament thickness, so the rings ovalise and ν is a few per cent less negative; the tolerance reflects that documented model difference.',
+    note: 'Like-for-like comparison: the reference assumes rigid rings, so the rings are given 20 times the ligament thickness (8000 times the bending stiffness). With rings as thin as the ligaments (ring_t = 1, the default) the same case gives ν = −0.952 because the rings ovalise; that compliant-ring result is a model feature, not an error, and is not benchmarked against the rigid-ring formula.',
   },
   // ------------------------------------------------------------------ negative stiffness
   {

@@ -57,10 +57,10 @@ export default [
   },
   // ---------------- Potts grain growth ----------------
   {
-    id: 's16-potts-parabolic-growth', suite: 16, title: 'Normal grain growth without particles: late-time exponent d ∝ t^½', mode: 'grain',
-    inputs: { mode: 'grain', fp: 0, mcs: 200 }, kpi: 'late_slope', expected: 0.5, tol: 0.15, kind: 'analytical',
+    id: 's16-potts-parabolic-growth', suite: 16, title: 'Normal grain growth without particles: parabolic law d² − d₀² ∝ t (exponent ½)', mode: 'grain',
+    inputs: { mode: 'grain', fp: 0, mcs: 200 }, kpi: 'm_parabolic', expected: 0.5, tol: 0.05, kind: 'analytical',
     reference: 'Burke & Turnbull parabolic grain-growth law for curvature-driven boundary migration (d² − d₀² = K t)',
-    note: 'Reduced model: one 64×64 zero-temperature Potts lattice, slope taken over the last 30 % of samples while only tens of grains remain. Other seeds scatter by about ±0.04 around 0.46. The whole-run power-law KPI n_growth is not benchmarked: it neglects the initial grain size and so reads 2.3–2.6 during the transient.',
+    note: 'Offset-corrected exponent m in ⟨A⟩ − A_ref ∝ (t − t_ref)^(2m), fitted to the mean grain area pooled over twelve seeded 64×64 zero-temperature Potts lattices from the first sample with at least 25 cells per grain. The reference law itself contains the initial size d₀, so the comparison is like for like. Jackknife standard error about 0.014 (KPI m_se); other seeds give 0.47–0.50. The uncorrected late-time slope d ln d/d ln t (KPI late_slope) reads 0.43–0.48 at 200 steps because d₀ is not negligible, and is not benchmarked.',
   },
   {
     id: 's16-potts-zener-limit', suite: 16, title: 'Zener–Smith limiting grain size for single-cell particles', mode: 'grain',

@@ -264,14 +264,17 @@ function eis(inp) {
 
 // ---------------------------------------------------------------- semiconductor nanostructures
 const SEMI = {
-  Si: { Eg: 1.12, me: 1.08, mh: 0.81, bm: [0.26, 0.39], eps: 11.7, mun: 0.135, mup: 0.048 }, Ge: { Eg: 0.661, me: 0.56, mh: 0.29, bm: [0.12, 0.21], eps: 16.2, mun: 0.39, mup: 0.19 },
-  GaAs: { Eg: 1.424, me: 0.067, mh: 0.47, eps: 12.9, mun: 0.85, mup: 0.04 }, ZnO: { Eg: 3.37, me: 0.24, mh: 0.59, eps: 8.5, mun: 0.02, mup: 0.002 },
+  // N300 = [N_c, N_v] at 300 K in m⁻³ where the tabulated effective densities of states differ from the single-mass parabolic value
+  // (Si: 2.8×10¹⁹ and 2.65×10¹⁹ cm⁻³, Sze & Ng); vg = Varshni parameters [E_g(0) eV, α eV/K, β K] for E_g(T) = E_g(0) − αT²/(T + β).
+  Si: { Eg: 1.12, me: 1.08, mh: 0.81, N300: [2.8e25, 2.65e25], vg: [1.17, 4.73e-4, 636], bm: [0.26, 0.39], eps: 11.7, mun: 0.135, mup: 0.048 }, Ge: { Eg: 0.661, me: 0.56, mh: 0.29, vg: [0.7437, 4.774e-4, 235], bm: [0.12, 0.21], eps: 16.2, mun: 0.39, mup: 0.19 },
+  GaAs: { Eg: 1.424, me: 0.067, mh: 0.47, vg: [1.519, 5.405e-4, 204], eps: 12.9, mun: 0.85, mup: 0.04 }, ZnO: { Eg: 3.37, me: 0.24, mh: 0.59, eps: 8.5, mun: 0.02, mup: 0.002 },
   GaN: { Eg: 3.39, me: 0.20, mh: 1.4, eps: 8.9, mun: 0.10, mup: 0.003 }, CdSe: { Eg: 1.74, me: 0.13, mh: 0.45, eps: 10.2, mun: 0.065, mup: 0.004 }, PbS: { Eg: 0.41, me: 0.085, mh: 0.085, eps: 17.2, mun: 0.06, mup: 0.07 },
 };
 function semi(inp) {
   const m = SEMI[inp.semi_mat] || SEMI.Si, T = inp.T + 273.15, kT = K_B * T, Vt = kT / Q_E, W = [], eps = m.eps * EPS0;
   const Nd = inp.Nd * 1e6, Na = inp.Na * 1e6, dos = (ms, t) => 2 * (2 * PI * ms * M_E * K_B * t / (H_PLANCK * H_PLANCK)) ** 1.5;
-  const Nc = dos(m.me, T), Nv = dos(m.mh, T), niT = t => Math.sqrt(dos(m.me, t) * dos(m.mh, t)) * Math.exp(-m.Eg * Q_E / (2 * K_B * t)), ni = niT(T);
+  const NcT = t => m.N300 ? m.N300[0] * (t / 300) ** 1.5 : dos(m.me, t), NvT = t => m.N300 ? m.N300[1] * (t / 300) ** 1.5 : dos(m.mh, t), EgT = t => m.vg ? m.vg[0] - m.vg[1] * t * t / (t + m.vg[2]) : m.Eg;
+  const Nc = NcT(T), Nv = NvT(T), niT = t => Math.sqrt(NcT(t) * NvT(t)) * Math.exp(-EgT(t) * Q_E / (2 * K_B * t)), ni = niT(T);
   const n0 = Nd / 2 + Math.sqrt(Nd * Nd / 4 + ni * ni), p0 = ni * ni / n0, sigma = Q_E * (n0 * m.mun + p0 * m.mup);
   const EcEf = Vt * Math.log(Nc / n0), LD = Math.sqrt(eps * Vt / (Q_E * n0)), schottky = inp.contact === 'schottky';
   let Vbi = schottky ? inp.phiB - EcEf : Vt * Math.log(Math.max(Na * Nd / (ni * ni), 1.0001));
@@ -295,7 +298,7 @@ function semi(inp) {
   return {
     summary: `${inp.semi_mat} doped n-type at ${f3(inp.Nd)} cm⁻³ has n = ${f3(n0 * 1e-6)} cm⁻³ (intrinsic density ${f3(ni * 1e-6)} cm⁻³) and conductivity ${f3(sigma)} S/m at ${inp.T} °C. The ${schottky ? 'Schottky contact' : 'p–n junction'} has a built-in potential of ${f3(Vbi)} V and a depletion width of ${f3(Wd * 1e9)} nm. A ${inp.d_nw} nm nanowire is ${fullDep ? 'fully depleted by' : 'partly depleted by'} a ${inp.psi_s} V surface barrier, and a quantum dot of radius ${inp.R_qd} nm has a Brus gap of ${f3(Eqd)} eV (${f3(lam)} nm).`,
     kpis: [
-      kpi('ni', 'Intrinsic carrier density', ni * 1e-6, 'cm⁻³', 'Thermally generated electron (and hole) density √(N_c N_v)·exp(−E_g/2kT) from parabolic-band effective densities of states.'),
+      kpi('ni', 'Intrinsic carrier density', ni * 1e-6, 'cm⁻³', `Thermally generated electron (and hole) density √(N_c N_v)·exp(−E_g(T)/2kT) with ${m.N300 ? 'tabulated effective densities of states at 300 K scaled as T^1.5' : 'parabolic-band effective densities of states'} and ${m.vg ? `the Varshni gap E_g(T) = ${f4(EgT(T))} eV` : `a temperature-independent gap of ${m.Eg} eV`}.`),
       kpi('n', 'Electron density (n-side)', n0 * 1e-6, 'cm⁻³', 'Majority-carrier density from charge neutrality with fully ionised donors; equals N_D unless the material is close to intrinsic.'),
       kpi('p', 'Hole density (n-side)', p0 * 1e-6, 'cm⁻³', 'Minority-carrier density from the mass-action law n·p = nᵢ²; it controls diffusion leakage and photoresponse.'),
       kpi('sigma', 'Bulk conductivity', sigma, 'S/m', 'q(nµₙ + pµₚ) with handbook bulk mobilities; nanostructures usually show lower mobility because of surface and grain-boundary scattering.'),

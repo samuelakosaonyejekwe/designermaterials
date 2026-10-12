@@ -77,11 +77,11 @@ export default [
     note: 'θ = −20°, h/l = 2 gives ν = −0.642. Bending-only reference; measured on the free edges in the middle half of a 20 × 12-cell panel.',
   },
   {
-    id: 's19-honeycomb-modulus', suite: 19, title: 'Regular hexagonal honeycomb panel: in-plane Young\'s modulus', mode: 'lattice_fe',
+    id: 's19-honeycomb-modulus', suite: 19, title: 'Regular hexagonal honeycomb panel: in-plane Young\'s modulus of the interior columns', mode: 'lattice_fe',
     inputs: { mode: 'lattice_fe', ctype: 'honeycomb', lcase: 'tension', ncx: 20, ncy: 12, cell: cellW, t_strut: tThin, depth: 0.01, E_s: Es, strain: 0.01 },
-    kpi: 'eff_fe', expected: 4 / Math.sqrt(3) * Es * (tThin / lHex) ** 3, tol: 0.07, kind: 'analytical',
+    kpi: 'eff_core', expected: 4 / Math.sqrt(3) * Es * (tThin / lHex) ** 3, tol: 0.01, kind: 'analytical',
     reference: 'Gibson & Ashby, Cellular Solids — regular hexagonal honeycomb, E* = (4/√3)·E_s·(t/l)³',
-    note: 'The reference is the infinite lattice. A finite panel is softer because the wall columns on its two free zig-zag edges are only half supported; the deficit is close to one cell width in Nx (about 5 % at the maximum of 20 cells, 10 % at 10 cells) and is what the suite reports as its finite-size effect.',
+    note: 'Like-for-like comparison with the infinite lattice: the KPI eff_core uses the reactions of the loaded nodes in the central half of the panel width, away from the free zig-zag edges. The whole-panel value (KPI eff_fe) is about 5 % lower at 20 cells and 10 % lower at 10 cells because the edge columns are only half supported; that genuine finite-size effect is reported by the suite and is not benchmarked against the infinite-lattice formula. Axial and shear wall deformation, neglected in the reference, contribute under 0.1 % at t/l = 0.017.',
   },
   // ------------------------------------------------------------------ homogenised plate
   {

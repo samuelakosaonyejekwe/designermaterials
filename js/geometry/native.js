@@ -1,8 +1,9 @@
 // Native / proprietary CAD containers: everything that can be read from the container structure without the vendor's
 // modelling kernel — OLE2 compound files (property sets, thumbnails, stream inventory), the SOLIDWORKS 2015+ chunk
-// container (preview, document properties, configuration names, embedded Parasolid partitions), Inventor, Fusion and
-// FreeCAD archives, the JT table of contents, the Parasolid text header and ACIS SAT topology points. Nothing here
-// evaluates a proprietary B-rep: each reader states exactly what it recovered.
+// container (preview, document properties, configuration names, embedded Parasolid partitions), Siemens NX parts (their
+// Parasolid partitions), Inventor, Fusion and FreeCAD archives, the JT table of contents, the Parasolid text header and
+// ACIS SAT topology points. Nothing here evaluates a B-rep: each reader states exactly what it recovered, and the
+// Parasolid streams it unpacks are translated elsewhere (xt.js).
 import * as F from './formats.js';
 
 const { min, max, abs, hypot } = Math;
@@ -155,7 +156,7 @@ export function parseSolidWorks(bytes) {
   const kw = names.includes('swXmlContents/KeyWords') ? text('swXmlContents/KeyWords') : ''; if (kw) { const feats = [...kw.matchAll(/<(?:swFeature|Feature)\b[^>]*\b(?:Name|name)="([^"]+)"/g)].map(m => xmlText(m[1])); if (feats.length) { meta.featureNames = feats.slice(0, 200); recovered.push(`${feats.length} feature and item names from the keyword index (names only — no parameters or sketches)`); } }
   // embedded Parasolid bodies
   const embedded = []; for (const n of names.filter(x => /(^|\/)Config-\d+-Partition$/.test(x))) { const ps = swPartition(get(n)); if (ps) { const info = parasolidInfo(ps), c = /Config-(\d+)/.exec(n)[1]; embedded.push({ name: `configuration-${c}.x_b`, mime: 'application/octet-stream', format: 'parasolid', bytes: ps, description: `Parasolid ${info.encoding} transmit${info.partition ? ' (partition)' : ''} of configuration ${c}${cfgNames[+c] ? ` "${cfgNames[+c]}"` : ''}, modeller version ${info.modellerVersion || 'unknown'}, schema ${info.schema || 'unknown'}`, ...info }); } }
-  if (embedded.length) { extra.embedded = embedded; meta.parasolid = embedded.map(e => e.description); recovered.push(`${embedded.length} embedded Parasolid body stream(s) unpacked intact (${embedded.map(e => `${e.name}: ${e.bytes.length} bytes, ${e.schema || 'schema not read'}`).join('; ')}) — this is the exact B-rep in Parasolid partition form, kept for saving; it is not evaluated here because no open kernel reads Parasolid, and tools that expect an ordinary part transmit (.x_t / .x_b) may not accept a partition`); }
+  if (embedded.length) { extra.embedded = embedded; meta.parasolid = embedded.map(e => e.description); recovered.push(`${embedded.length} embedded Parasolid body stream(s) unpacked intact (${embedded.map(e => `${e.name}: ${e.bytes.length} bytes, ${e.schema || 'schema not read'}`).join('; ')}) — the exact B-rep of the part in Parasolid partition form, kept for saving`); }
   else if (names.some(x => /Partition$/.test(x))) notRecovered.push('the body partition streams are present but did not unpack to a Parasolid transmit file');
   if (names.some(x => /DisplayLists/.test(x))) notRecovered.push('the stored display lists (the graphics tessellation SOLIDWORKS draws on screen) use an undocumented encoding and were not decoded');
   notRecovered.push('the feature tree, sketches, dimensions and mates are stored as serialised SOLIDWORKS objects and were not interpreted');
@@ -171,7 +172,11 @@ export function parseOleCad(bytes, product) {
     const seg = d.cfb.entries.filter(e => /RSeStorage\//.test(e.path) && e.type === 'stream'); if (seg.length) d.meta.segments = seg.length;
     const info = d.cfb.find(/RSeDbRevisionInfo$|RSeDb$/)[0], s = info ? wideStrings(d.cfb.read(info), 6, 60).filter(x => /Schema|Saved|Build|\d{4} \(/.test(x)) : []; if (s.length) { d.meta.revisionInfo = s.slice(0, 8); d.recovered.push(`save history — ${s.slice(0, 4).join('; ')}`); }
     notRecovered.push('the model segments (B-rep, graphics, browser, design-view data) are stored in Inventor\'s proprietary segment encoding, whose B-rep part is an Autodesk ShapeManager (ACIS-derived) body: not decoded');
-  } else notRecovered.push(`the ${product} model streams are in the vendor's proprietary encoding and were not decoded`);
+  } else {
+    if (product === 'Solid Edge') { const found = []; for (const e of d.cfb.entries) if (e.type === 'stream' && e.size > 512) { const data = d.cfb.read(e); if (data) for (const f of findParasolid(data)) if (f.guise !== 'deltas') found.push({ ...f, stream: e.path.replace(/[\x00-\x1f]/g, '·') }); }
+      if (found.length) { d.extra.embedded = found.map((f, i) => ({ name: `parasolid-${i + 1}.x_b`, mime: 'application/octet-stream', format: 'parasolid', bytes: f.bytes, description: `Parasolid binary transmit (${f.guise}) from stream "${f.stream}", modeller version ${f.modellerVersion}, schema ${f.schema || 'unknown'}`, encoding: f.encoding, partition: f.partition, modellerVersion: f.modellerVersion, schema: f.schema })); d.recovered.push(`${found.length} embedded Parasolid stream(s) located by signature`); } }
+    notRecovered.push(d.extra.embedded ? `the ${product} feature and document streams are in the vendor's proprietary encoding and were not decoded` : `the ${product} model streams are in the vendor's proprietary encoding and were not decoded`);
+  }
   if (!d.extra.preview) notRecovered.push('no thumbnail was found in the property sets or preview streams');
   return { meta: d.meta, recovered: d.recovered, notRecovered, extra: d.extra, geometry: null };
 }
@@ -232,6 +237,34 @@ export function readFCStd(bytes) {
   return { meta, shapes, notes, extra };
 }
 
+// ---------------------------------------------------------------- Parasolid transmit data inside other files
+// Neutral-binary transmit streams found by signature: stored raw ("PS\0\0\0" + modeller string) or as zlib streams
+// (each candidate zlib header is inflated and kept when the result starts with the transmit signature).
+// → [{offset, bytes, compressed, encoding, partition, guise, modellerVersion, schema}]
+export function findParasolid(bytes, limit = 64) {
+  const b = F.toBytes(bytes), out = [];
+  const info = d => { const head = latin(d, 0, 200), m = /^PS\0\0\0.: TRANSMIT FILE\s*(?:\(([a-z ]+)\))?\s*created by modeller version (\d+)/.exec(head), sc = /SCH_\d+_\d+/.exec(head); return m ? { encoding: 'binary', guise: m[1] || 'part', partition: m[1] === 'partition', modellerVersion: m[2], schema: sc ? sc[0] : null } : null; };
+  for (let i = 0; i + 24 < b.length && out.length < limit; i++) {
+    if (b[i] === 0x50 && b[i + 1] === 0x53 && b[i + 2] === 0 && b[i + 3] === 0 && b[i + 4] === 0 && b[i + 6] === 0x3A && b[i + 7] === 0x20 && b[i + 8] === 0x54) { const d = b.subarray(i), m = info(d); if (m) out.push({ offset: i, bytes: d, compressed: false, ...m }); }
+    else if (b[i] === 0x78 && (b[i + 1] === 0x01 || b[i + 1] === 0x5E || b[i + 1] === 0x9C || b[i + 1] === 0xDA)) { let r = null, plausible = true; try { F.inflateRaw(b.subarray(i + 2, i + 130)); } catch (e) { plausible = /unexpected end|exceeds input/.test(String(e && e.message)); } /* a short window rejects most false headers cheaply */ if (plausible) { try { r = F.inflateRaw(b, i + 2); } catch (e) { r = null; } } const m = r && r.data.length > 64 ? info(r.data) : null; if (m) { out.push({ offset: i, bytes: r.data, compressed: true, ...m }); i = r.end - 1; } }
+  }
+  return out;
+}
+// Siemens NX part files: an OLE2 compound file (through NX 12) or the "SPLMSSTR" container (NX 1847 and later). The solid
+// model is a Parasolid partition, stored raw in the former and zlib-deflated in the latter; it is located by signature.
+export function parseNX(bytes) {
+  const b = F.toBytes(bytes), recovered = [], notRecovered = [], extra = {}; let meta = {}, areas = [b];
+  if (startsWith(b, [0xD0, 0xCF, 0x11, 0xE0])) { const d = cfbDocument(b, 'NX (OLE2 layout)'); meta = d.meta; recovered.push(...d.recovered); Object.assign(extra, d.extra); areas = d.cfb.entries.filter(e => e.type === 'stream' && e.size > 512).map(e => d.cfb.read(e)).filter(Boolean); meta.layout = 'OLE2 compound file (NX 12 and earlier)'; }
+  else if (latin(b, 0, 8) === 'SPLMSSTR') { meta.layout = 'SPLM structured storage (NX 1847 and later)'; const names = [...new Set((latin(b, 0, min(b.length, 16384)).match(/\/Root\/[\x20-\x7e]{1,60}/g) || []))]; if (names.length) { meta.entries = names.slice(0, 60); recovered.push(`container directory: ${names.length} entries (${names.slice(0, 8).join(', ')}${names.length > 8 ? ', …' : ''})`); } }
+  else throw new Error('NX: neither an OLE2 compound file nor the SPLMSSTR container');
+  const found = []; for (const a of areas) found.push(...findParasolid(a));
+  const whole = found.filter(f => f.guise !== 'deltas'), parts = whole.some(f => f.partition) ? whole.filter(f => f.partition) : whole, deltas = found.length - whole.length, aside = whole.length - parts.length;
+  if (parts.length) { extra.embedded = parts.map((f, i) => ({ name: `partition-${i + 1}.x_b`, mime: 'application/octet-stream', format: 'parasolid', bytes: f.bytes, description: `Parasolid binary transmit (${f.guise}) ${i + 1} of ${parts.length}, modeller version ${f.modellerVersion}, schema ${f.schema || 'unknown'}${f.compressed ? ', stored deflated' : ''}`, encoding: f.encoding, partition: f.partition, modellerVersion: f.modellerVersion, schema: f.schema })); meta.parasolid = extra.embedded.map(e => e.description); recovered.push(`${parts.length} embedded Parasolid ${parts[0].partition ? 'partition' : 'transmit'} stream(s) located (${extra.embedded.map(e => `${e.bytes.length} bytes, ${e.schema || 'schema not read'}`).join('; ')})${aside ? `; ${aside} further single-body transmit stream(s) (sketch, section and reference bodies) left aside` : ''}${deltas ? `; ${deltas} roll-back delta stream(s) left aside` : ''}`); }
+  else notRecovered.push('no Parasolid transmit stream was found in the file');
+  notRecovered.push('the NX object model (features, expressions, sketches, PMI, drawings) is stored in a proprietary serialisation and was not interpreted');
+  return { meta, recovered, notRecovered, extra, geometry: null };
+}
+
 // ---------------------------------------------------------------- JT (ISO 14306)
 const JT_SEG = { 1: 'logical scene graph', 2: 'JT B-rep', 3: 'PMI data', 4: 'meta data', 6: 'shape', 7: 'shape LOD 0', 8: 'shape LOD 1', 9: 'shape LOD 2', 10: 'shape LOD 3', 11: 'shape LOD 4', 12: 'shape LOD 5', 13: 'shape LOD 6', 14: 'shape LOD 7', 15: 'shape LOD 8', 16: 'shape LOD 9', 17: 'XT B-rep (Parasolid)', 18: 'wireframe representation', 20: 'ULP', 24: 'LWPA', 30: 'MultiXT B-rep', 31: 'InfoSegment', 33: 'STEP B-rep' };
 export function parseJT(bytes) {
@@ -257,7 +290,6 @@ export function parseParasolid(bytes) {
   if (meta.sch && !meta.schema) meta.schema = meta.sch;
   recovered.push(`Parasolid ${meta.encoding} transmit file${meta.partition ? ' (partition)' : ''}${meta.modellerVersion ? `, written by modeller version ${meta.modellerVersion}` : ''}${meta.schema ? `, schema ${meta.schema}` : ''}`);
   const hk = ['appl', 'date', 'key', 'file', 'format', 'guise'].filter(k => meta[k]).map(k => `${k}: ${meta[k]}`); if (hk.length) recovered.push(`header — ${hk.join('; ')}`);
-  notRecovered.push('the node records (bodies, faces, edges, surfaces, points) were not decoded: their field layout is defined by the embedded schema and, without a Parasolid-compatible reader, neither an entity inventory nor a bounding box can be given reliably');
   return { meta, recovered, notRecovered, extra: {}, geometry: null };
 }
 

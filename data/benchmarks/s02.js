@@ -174,9 +174,9 @@ export default [
   },
   {
     id: 's02-subst-mismatch-strain-zno-on-si', suite: 2, title: 'Thermal-mismatch strain of ZnO on silicon for ΔT = 100 K', mode: 'subst',
-    inputs: { mode: 'subst', matId: 'zno-nanoparticles', subId: 'silicon', dT: 100 }, kpi: 'eps', expected: (2.6e-6 - 4.3e-6) * 100, tol: 0.1, kind: 'reference-data',
+    inputs: { mode: 'subst', matId: 'zno-nanoparticles', subId: 'silicon', dT: 100 }, kpi: 'eps', expected: (2.6e-6 - 4.3e-6) * 100, tol: 0.02, kind: 'reference-data',
     reference: 'ε = (α_substrate − α_film)ΔT with handbook expansion coefficients: Si 2.6 × 10⁻⁶ /K, polycrystalline ZnO about 4.3 × 10⁻⁶ /K',
-    note: 'Tabulated mean expansion coefficients of ZnO range from 4.0 to 4.8 × 10⁻⁶ /K (a- and c-axis values differ), hence the 10 % tolerance.',
+    note: 'Checks the mismatch relation and the library coefficients against the stated handbook values (Si 2.6, ZnO 4.3 × 10⁻⁶ /K). Tabulated mean expansion coefficients of ZnO range from 4.0 to 4.8 × 10⁻⁶ /K (a- and c-axis values differ); that spread is a property-data uncertainty of any such estimate and is not part of the tolerance.',
   },
   {
     id: 's02-props-copper-diffusivity', suite: 2, title: 'Thermal diffusivity of copper', mode: 'props',

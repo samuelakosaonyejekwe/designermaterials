@@ -72,6 +72,12 @@ export const PORTALS = [
 ];
 export const TOOL_REPOS = ['materialsproject/pymatgen', 'lammps/lammps', 'QEF/q-e', 'cp2k/cp2k', 'OpenFOAM/OpenFOAM-dev', 'FEniCS/dolfinx', 'NanoComp/meep', 'KLayout/klayout', 'openscad/openscad', 'ovito-org/ovito', 'Materials-Consortia/OPTIMADE'];
 
+// ---- server-refreshed snapshot (same origin): feeds, arXiv preprints and Crystallography Open Database entries ----
+let snapP = null, snapAt = 0;
+export function snapshot(force) { if (!snapP || force || Date.now() - snapAt > 15 * 60e3) { snapAt = Date.now(); snapP = fetch('data/live/snapshot.json').then(r => r.ok ? r.json() : null).catch(() => null); } return snapP; }
+export const arxiv = async id => { const s = await snapshot(); return s?.arxiv?.[id] ? { data: s.arxiv[id], at: Date.parse(s.at), cached: true, stale: false } : null; };
+export const cod = async formula => { const s = await snapshot(); return s?.cod?.[formula] ? { data: s.cod[formula], at: Date.parse(s.at) } : null; };
+
 // ---- cache ----
 const TTL = { feed: 6 * 3600e3, search: 12 * 3600e3, struct: 7 * 86400e3 };
 export const online = () => typeof navigator === 'undefined' || navigator.onLine !== false;
@@ -81,7 +87,8 @@ async function cached(key, ttl, fn, { force = false } = {}) {
   try { const data = await fn(); const rec = { data, at: Date.now() }; await kv.set('live:' + key, rec); return { ...rec, cached: false, stale: false }; }
   catch (e) { if (hit) return { ...hit, cached: true, stale: true, error: e.message }; throw e; }
 }
-export const feed = (key, opt) => cached('feed:' + key, TTL.feed, FEEDS[key].get, opt);
+// A feed takes whichever is newer: the direct request from this browser or the server-refreshed snapshot.
+export const feed = async (key, opt) => { let direct = null, err = null; try { direct = await cached('feed:' + key, TTL.feed, FEEDS[key].get, opt); } catch (e) { err = e; } const s = await snapshot(), sv = s?.feeds?.[key]; if (sv && (!direct || direct.stale) && (!direct || Date.parse(s.at) > direct.at)) return { data: sv, at: Date.parse(s.at), cached: true, stale: false, server: true }; if (direct) return direct; throw err; };
 export const literature = (q, src = 'openalex', opt) => cached(`lit:${src}:${q}`, TTL.search, () => CONNECTORS[src].search(q), opt);
 export const structures = (els, src = 'alexandria', opt) => cached(`str:${src}:${[...els].sort().join('-')}`, TTL.struct, () => CONNECTORS[src].structures(els), opt);
 export const compound = (name, opt) => cached('cmp:' + name.toLowerCase(), TTL.struct, () => CONNECTORS.pubchem.compound(name), opt);

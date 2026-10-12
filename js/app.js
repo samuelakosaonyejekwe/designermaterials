@@ -66,7 +66,7 @@ async function downloadBundle() {
 }
 const ctx = { applyTheme, install, canInstall: () => !!deferred, swStatus: () => swState, downloadBundle,
   checkUpdate: async () => { if (!reg) return toast(swState); await reg.update(); toast(reg.waiting || reg.installing ? 'A new version is being installed' : 'You have the latest version', 'ok'); },
-  precachePacks: async () => { toast('Downloading CAD geometry kernels…'); try { const list = (await (await fetch('assets.json')).json()).packs || []; let n = 0; for (const f of list) { const r = await fetch(f); if (r.ok) { await r.arrayBuffer(); n++; } } toast(`${n} kernel files stored for offline use`, 'ok', 6000); } catch (e) { toast('Could not download: ' + e.message, 'bad'); } },
+  precachePacks: async (silent) => { if (!silent) toast('Downloading CAD geometry kernels…'); try { const A = await (await fetch('assets.json')).json(), list = A.packs || []; if (silent && prefs.get('packs') === A.build) return; let n = 0; for (const f of list) { const r = await fetch(f); if (r.ok) { await r.arrayBuffer(); n++; } } if (n === list.length) prefs.set('packs', A.build); if (!silent) toast(`${n} kernel files stored for offline use`, 'ok', 6000); } catch (e) { if (!silent) toast('Could not download: ' + e.message, 'bad'); } },
   precache: async () => { toast('Downloading all suites and data for offline use…'); const r = await swMsg('precacheAll'); toast(r ? `Ready for offline use: ${r.cached} files stored` : 'Offline storage will complete after the next reload', 'ok', 6000); } };
 
 // ---- shell ----
@@ -91,4 +91,6 @@ addEventListener('hashchange', () => { if (history.state?.i === undefined) { idx
 addEventListener('popstate', () => { if (history.state?.i !== undefined) { idx = history.state.i; syncNav(); } });
 addEventListener('keydown', e => { if (e.altKey && e.key === 'ArrowLeft') history.back(); if (e.altKey && e.key === 'ArrowRight') history.forward(); });
 
-(async () => { try { const spec = await loadSpec(); await loadProject(); for (let i = 1; i <= 29; i++) kv.get('bench:' + i).then(b => { if (b) benchStatus[i] = b; }); shell(spec); await route(); initSW(); startAutoRefresh(); } catch (e) { main.replaceChildren(h('div.card.error', h('h2', 'Designer Materials could not start'), h('pre', String(e.stack || e)))); } })();
+(async () => { try { const spec = await loadSpec(); await loadProject(); for (let i = 1; i <= 29; i++) kv.get('bench:' + i).then(b => { if (b) benchStatus[i] = b; }); shell(spec); await route(); initSW(); startAutoRefresh();
+  // Store the on-demand CAD kernels for offline use once the app is idle (not on metered / data-saver connections).
+  const conn = navigator.connection || {}; if ('serviceWorker' in navigator && !conn.saveData && !/2g/.test(conn.effectiveType || '')) setTimeout(() => (window.requestIdleCallback || setTimeout)(() => navigator.serviceWorker.ready.then(() => ctx.precachePacks(true))), 15000); } catch (e) { main.replaceChildren(h('div.card.error', h('h2', 'Designer Materials could not start'), h('pre', String(e.stack || e)))); } })();

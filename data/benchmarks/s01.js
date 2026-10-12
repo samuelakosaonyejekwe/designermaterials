@@ -32,9 +32,9 @@ export default [
   },
   {
     id: 's01-stack-monte-carlo-1sigma', suite: 1, title: 'Monte Carlo reject fraction for a limit of one stack standard deviation', mode: 'alloc',
-    inputs: { mode: 'alloc', stack: STACK4, stackLimit: 0.2 / 3, kSigma: 3, seed: 1 }, kpi: 'p_out', expected: 2 * (1 - Phi(1)), tol: 0.06, kind: 'analytical',
+    inputs: { mode: 'alloc', stack: STACK4, stackLimit: 0.2 / 3, kSigma: 3, seed: 1 }, kpi: 'p_out', expected: 2 * (1 - Phi(1)), tol: 0.025, kind: 'analytical',
     reference: 'Normal distribution: P(|X| > σ) = 0.3173',
-    note: 'Seeded sample of 4000 assemblies: the binomial standard error is 2.3 % of the expected value, so the tolerance is about 2.5 standard errors.',
+    note: 'Seeded sample of 40 000 assemblies (the suite draws up to 40 000 for short tolerance tables): the binomial standard error is 0.73 % of the expected value, so the tolerance is about 3.4 standard errors.',
   },
   {
     id: 's01-margin-of-safety', suite: 1, title: 'Margin of safety with derating and required factor of safety', mode: 'alloc',

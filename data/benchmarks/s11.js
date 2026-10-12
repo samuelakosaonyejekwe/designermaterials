@@ -266,10 +266,10 @@ export default [
     inputs: { mode: 'semi', semi_mat: 'Si', T: T300C },
     kpi: 'ni',
     expected: 1.0e10,
-    tol: 0.15,
+    tol: 0.03,
     kind: 'reference-data',
-    reference: 'Accepted intrinsic carrier density of silicon at 300 K, about 1×10¹⁰ cm⁻³ (Sze & Ng, Physics of Semiconductor Devices; Green, intrinsic concentration of silicon)',
-    note: 'The suite uses parabolic-band density-of-states masses (1.08, 0.81) and a fixed 1.12 eV gap, a documented reduced model that gives about 0.9×10¹⁰ cm⁻³; nᵢ is exponentially sensitive to the gap (1 % in E_g is 24 % in nᵢ), hence 15 %.'
+    reference: 'Accepted intrinsic carrier density of silicon at 300 K, about 1×10¹⁰ cm⁻³ (Sze & Ng, Physics of Semiconductor Devices; Sproul & Green, intrinsic carrier concentration of silicon)',
+    note: 'The suite uses the tabulated effective densities of states of silicon (2.8×10¹⁹ and 2.65×10¹⁹ cm⁻³ at 300 K, scaled as T^1.5) with the Varshni gap E_g(T) = 1.17 − 4.73×10⁻⁴ T²/(T + 636) eV, which gives 0.98×10¹⁰ cm⁻³. Published determinations lie between about 0.97 and 1.08×10¹⁰ cm⁻³.'
   },
   {
     id: 's11-semi-gaas-fermi-level',
@@ -295,7 +295,7 @@ export default [
     tol: 0.02,
     kind: 'analytical',
     reference: 'V_bi = (kT/q)·ln(N_A N_D/nᵢ²) with nᵢ = 1.0×10¹⁰ cm⁻³ (Sze & Ng, Physics of Semiconductor Devices)',
-    note: '0.833 V. The reference uses the accepted nᵢ rather than the suite\'s parabolic-band value; the logarithm reduces that difference to under 1 %.'
+    note: '0.833 V. The reference uses the accepted nᵢ; the suite value differs by about 2 %, which the logarithm reduces to under 0.2 %.'
   },
   {
     id: 's11-semi-silicon-pn-depletion-width',

@@ -35,11 +35,12 @@ const inputs = [
   { key: 'thick', label: 'Slab thickness', unit: 'm', value: 0.01, min: 1e-5, max: 10, log: true, group: 'Domain', showIf: { mode: ['darcy2d'] }, help: 'Out-of-plane thickness used to convert the 2-D solution into a flow rate.' },
   { key: 'Kg', label: 'Geometric-mean permeability', unit: 'm²', value: 1e-12, min: 1e-18, max: 1e-6, log: true, group: 'Porous medium', bus: 'eff.permeability', showIf: { mode: ['darcy2d'] }, help: 'Median of the log-normal permeability field (10⁻¹² m² ≈ 1 darcy).' },
   { key: 'sigK', label: 'Standard deviation of ln K', unit: '', value: 1, min: 0, max: 3, group: 'Porous medium', showIf: { mode: ['darcy2d'] }, help: 'Heterogeneity of the permeability field. Zero is homogeneous; above about 2 flow concentrates in a few channels.' },
-  { key: 'corr', label: 'Correlation length (grid cells)', unit: 'cells', value: 3, min: 0, max: 10, step: 1, group: 'Porous medium', showIf: { mode: ['darcy2d'] }, help: 'Number of smoothing passes applied to the random field: larger values give larger patches of high and low permeability.' },
+  { key: 'corr', label: 'Correlation length (grid cells)', unit: 'cells', value: 3, min: 0, max: 10, step: 1, group: 'Porous medium', showIf: { mode: ['darcy2d'] }, help: 'Number of smoothing passes applied to the random field: larger values give larger patches of high and low permeability. The filter is scaled with the cell size so that the correlation length is the same physical distance along x and y, about √(2n/3) cells of the finer spacing for n passes.' },
   { key: 'dP', label: 'Applied pressure difference', unit: 'Pa', value: 1e5, min: 1, max: 1e8, log: true, group: 'Operation', showIf: { mode: ['darcy2d'] }, help: 'Inlet pressure minus outlet pressure.' },
   { key: 'pout', label: 'Outlet pressure', unit: 'Pa', value: 101325, min: 0, max: 1e8, group: 'Operation', bus: 'proc.P', showIf: { mode: ['darcy2d'] }, help: 'Absolute pressure at the outlet face; it only shifts the pressure map.' },
   { key: 'cin', label: 'Inlet precursor concentration', unit: 'mol/m³', value: 10, min: 1e-6, max: 1e5, log: true, group: 'Transport', bus: 'proc.c_precursor', showIf: { mode: ['darcy2d'] }, help: 'Concentration entering at the inlet face (10 mol/m³ = 0.01 mol/L).' },
   { key: 'grid', label: 'Grid resolution', type: 'select', value: 'medium', group: 'Numerics', showIf: { mode: ['darcy2d'] }, options: [{ value: 'coarse', label: '32 × 24 cells' }, { value: 'medium', label: '48 × 32 cells' }, { value: 'fine', label: '72 × 48 cells' }], help: 'Finite-volume grid. Finer grids resolve channelling better at higher cost; compare two grids to judge discretisation error.' },
+  { key: 'nens', label: 'Realisations in the permeability ensemble', unit: '', value: 8, min: 1, max: 16, step: 1, sens: false, group: 'Numerics', showIf: { mode: ['darcy2d'] }, help: 'Number of independent seeded fields solved for the ensemble-mean effective permeability and its standard error. The maps and the transport solution always show the first realisation.' },
   { key: 'seed', label: 'Random seed of the permeability field', unit: '', value: 1, min: 1, max: 9999, step: 1, sens: false, group: 'Numerics', showIf: { mode: ['darcy2d'] }, help: 'Seed of the pseudo-random generator; the same seed always gives the same field.' },
   // channel
   { key: 'geo', label: 'Channel geometry', type: 'select', value: 'pipe', group: 'Channel', showIf: { mode: ['channel'] }, options: [{ value: 'pipe', label: 'Straight tube' }, { value: 'coil', label: 'Helical coil' }], help: 'A coil adds secondary (Dean) flow that raises pressure drop and delays transition to turbulence.' },
@@ -128,16 +129,29 @@ function runBed(inp) {
 function runDarcy2D(inp) {
   const mu = num(inp, 'mu'), D = num(inp, 'Dmol'), k = num(inp, 'k1'), e = num(inp, 'por'), Lx = num(inp, 'Lx'), Ly = num(inp, 'Ly'), th = num(inp, 'thick'), Kg = num(inp, 'Kg'), sig = num(inp, 'sigK'), corr = Math.round(num(inp, 'corr')), dP = num(inp, 'dP'), pout = num(inp, 'pout'), cin = num(inp, 'cin'), seed = Math.round(num(inp, 'seed'));
   const [nx, ny] = { coarse: [32, 24], medium: [48, 32], fine: [72, 48] }[sel(inp, 'grid')], n = nx * ny, dx = Lx / nx, dy = Ly / ny, warnings = [], checks = [], id = (i, j) => j * nx + i;
-  // correlated log-normal permeability field (seeded)
-  const rg = N.rng(seed); let z = new Float64Array(n); for (let q = 0; q < n; q++) z[q] = rg.normal();
-  for (let p = 0; p < corr; p++) { const w = new Float64Array(n); for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { let s = 0, c = 0; for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) { const ii = i + a, jj = j + b; if (ii >= 0 && ii < nx && jj >= 0 && jj < ny) { s += z[id(ii, jj)]; c++; } } w[id(i, j)] = s / c; } z = w; }
-  let m = 0, v = 0; for (let q = 0; q < n; q++) m += z[q]; m /= n; for (let q = 0; q < n; q++) v += (z[q] - m) ** 2; const sd = Math.sqrt(v / n) || 1;
-  const K = new Float64Array(n); for (let q = 0; q < n; q++) K[q] = Kg * Math.exp(sig * (z[q] - m) / sd);
-  // transmissibilities (harmonic means)
-  const Tx = new Float64Array((nx + 1) * ny), Ty = new Float64Array(nx * (ny + 1)), ax = dy * th / (dx * mu), ay = dx * th / (dy * mu), hm = (a, b) => 2 * a * b / (a + b);
+  // correlated log-normal permeability field (seeded). Each smoothing pass is a separable three-point filter whose weights are scaled
+  // with the cell size, so that the correlation length is the same physical distance along x and y (statistically isotropic field)
+  // even though the cells are not square; 'corr' passes give a Gaussian-like correlation of about √(2·corr/3) cells of the finer spacing.
+  const hmin = Math.min(dx, dy), wx = (hmin / dx) ** 2 / 3, wy = (hmin / dy) ** 2 / 3;
+  const field = sd0 => {
+    const rg = N.rng(sd0); let z = new Float64Array(n); for (let q = 0; q < n; q++) z[q] = rg.normal();
+    for (let p = 0; p < corr; p++) {
+      const w = new Float64Array(n), w2 = new Float64Array(n);
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { let s = (1 - 2 * wx) * z[id(i, j)], c = 1 - 2 * wx; if (i > 0) { s += wx * z[id(i - 1, j)]; c += wx; } if (i < nx - 1) { s += wx * z[id(i + 1, j)]; c += wx; } w[id(i, j)] = s / c; }
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { let s = (1 - 2 * wy) * w[id(i, j)], c = 1 - 2 * wy; if (j > 0) { s += wy * w[id(i, j - 1)]; c += wy; } if (j < ny - 1) { s += wy * w[id(i, j + 1)]; c += wy; } w2[id(i, j)] = s / c; }
+      z = w2;
+    }
+    let m = 0, v = 0; for (let q = 0; q < n; q++) m += z[q]; m /= n; for (let q = 0; q < n; q++) v += (z[q] - m) ** 2; const sd = Math.sqrt(v / n) || 1;
+    const K = new Float64Array(n); for (let q = 0; q < n; q++) K[q] = Kg * Math.exp(sig * (z[q] - m) / sd);
+    return K;
+  };
+  const ax = dy * th / (dx * mu), ay = dx * th / (dy * mu), hm = (a, b) => 2 * a * b / (a + b), Tref = Kg * ax;
+  // pressure solution of one realisation: returns the transmissibilities, the scaled pressure and the solver record
+  const flow = (K, tol = 1e-10) => {
+  const Tx = new Float64Array((nx + 1) * ny), Ty = new Float64Array(nx * (ny + 1));   // transmissibilities (harmonic means)
   for (let j = 0; j < ny; j++) for (let i = 0; i <= nx; i++) Tx[j * (nx + 1) + i] = i === 0 ? 2 * K[id(0, j)] * ax : i === nx ? 2 * K[id(nx - 1, j)] * ax : hm(K[id(i - 1, j)], K[id(i, j)]) * ax;
   for (let j = 1; j < ny; j++) for (let i = 0; i < nx; i++) Ty[j * nx + i] = hm(K[id(i, j - 1)], K[id(i, j)]) * ay;
-  const diag = new Float64Array(n), b = new Float64Array(n), Tref = Kg * ax;
+  const diag = new Float64Array(n), b = new Float64Array(n);
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const q = id(i, j); diag[q] = (Tx[j * (nx + 1) + i] + Tx[j * (nx + 1) + i + 1] + Ty[j * nx + i] + Ty[(j + 1) * nx + i]) / Tref; if (i === 0) b[q] = Tx[j * (nx + 1)] / Tref; }
   // Conjugate gradient with a line (tridiagonal block) preconditioner along the more strongly coupled grid direction.
   // The kernel cg has diagonal preconditioning only, which stalls on strongly heterogeneous or stretched grids.
@@ -146,9 +160,19 @@ function runDarcy2D(inp) {
   const prec = (r, z) => { const lines = alongX ? ny : nx; for (let l = 0; l < lines; l++) { for (let k2 = 0; k2 < mL; k2++) { const q = alongX ? id(k2, l) : id(l, k2), lo = k2 === 0 ? 0 : (alongX ? Tx[l * (nx + 1) + k2] : Ty[k2 * nx + l]) / Tref, up = k2 === mL - 1 ? 0 : (alongX ? Tx[l * (nx + 1) + k2 + 1] : Ty[(k2 + 1) * nx + l]) / Tref, mm = diag[q] + (k2 ? lo * cpL[k2 - 1] : 0); cpL[k2] = -up / mm; dpL[k2] = (r[q] + (k2 ? lo * dpL[k2 - 1] : 0)) / mm; } let zn = 0; for (let k2 = mL - 1; k2 >= 0; k2--) { const q = alongX ? id(k2, l) : id(l, k2); zn = dpL[k2] - cpL[k2] * zn; z[q] = zn; } } };
   const sol = (() => { const x = new Float64Array(n), r = new Float64Array(n), z = new Float64Array(n), pv = new Float64Array(n), Ap = new Float64Array(n), history = []; for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) x[id(i, j)] = 1 - (i + 0.5) / nx;
     let bn = 0, rn = 0, rz = 0, it = 0; mv(x, Ap); for (let q = 0; q < n; q++) { r[q] = b[q] - Ap[q]; bn += b[q] * b[q]; rn += r[q] * r[q]; } bn = Math.sqrt(bn) || 1; prec(r, z); for (let q = 0; q < n; q++) { pv[q] = z[q]; rz += r[q] * z[q]; }
-    let res = Math.sqrt(rn) / bn; history.push(res); const tol = 1e-10, maxIter = 3000;
+    let res = Math.sqrt(rn) / bn; history.push(res); const maxIter = 3000;
     while (res > tol && it < maxIter) { mv(pv, Ap); let pAp = 0; for (let q = 0; q < n; q++) pAp += pv[q] * Ap[q]; const al = rz / pAp; rn = 0; for (let q = 0; q < n; q++) { x[q] += al * pv[q]; r[q] -= al * Ap[q]; rn += r[q] * r[q]; } prec(r, z); let rz2 = 0; for (let q = 0; q < n; q++) rz2 += r[q] * z[q]; const be = rz2 / rz; rz = rz2; for (let q = 0; q < n; q++) pv[q] = z[q] + be * pv[q]; res = Math.sqrt(rn) / bn; history.push(res); it++; }
-    return { x, iterations: it, residual: res, history, converged: res <= tol }; })(), ph = sol.x;   // ph = (p − p_out)/ΔP
+    return { x, iterations: it, residual: res, history, converged: res <= tol }; })();
+    let Qi = 0, Qo = 0; for (let j = 0; j < ny; j++) { Qi += Tx[j * (nx + 1)] * (1 - sol.x[id(0, j)]) * dP; Qo += Tx[j * (nx + 1) + nx] * sol.x[id(nx - 1, j)] * dP; }
+    return { Tx, Ty, sol, Keff: 0.5 * (Qi + Qo) * mu * Lx / (Ly * th * dP) };
+  };
+  const K = field(seed), { Tx, Ty, sol, Keff: Keff0 } = flow(K), ph = sol.x;   // ph = (p − p_out)/ΔP
+  // ensemble of independent seeded realisations (pressure solution only, tolerance 10⁻⁶): mean ratio K_eff/K_g and its standard error.
+  // The ensemble stops early once a fixed work budget (conjugate-gradient iterations × cells) is spent, so the run time stays bounded.
+  const nreq = Math.round(N.clamp(Number(inp.nens) || 1, 1, 16)), k0 = Keff0 / Kg, ensR = [k0]; let work = 0;
+  for (let q = 1; q < nreq && work < 3e6; q++) { if (sig > 0) { const f = flow(field(seed + 10007 * q), 1e-6); work += (f.sol.iterations + 1) * n; ensR.push(f.Keff / Kg); } else ensR.push(k0); }
+  const nens = ensR.length, ensMean = N.sum(ensR) / nens, ensSE = nens > 1 ? Math.sqrt(N.sum(ensR.map(r => (r - ensMean) ** 2)) / (nens - 1) / nens) : 0;
+  if (nens < nreq) warnings.push(`Only ${nens} of the ${nreq} requested realisations were solved: the pressure solver needs many iterations for this field and the ensemble was stopped at its work budget. Use a coarser grid or a smoother field for a larger ensemble.`);
   // face fluxes (m³/s), positive in +x / +y
   const Fx = new Float64Array((nx + 1) * ny), Fy = new Float64Array(nx * (ny + 1));
   for (let j = 0; j < ny; j++) for (let i = 0; i <= nx; i++) { const pl = i === 0 ? 1 : ph[id(i - 1, j)], pr = i === nx ? 0 : ph[id(i, j)]; Fx[j * (nx + 1) + i] = Tx[j * (nx + 1) + i] * (pl - pr) * dP; }
@@ -182,6 +206,7 @@ function runDarcy2D(inp) {
   checks.push(chk('Concentration bounded (0 ≤ c ≤ c_in, positivity-preserving upwind scheme)', cmin >= 0 && N.maxOf(c) <= 1 + 1e-9, `min ${F(cmin * cin, 3)}, max ${F(N.maxOf(c) * cin, 3)} mol/m³`));
   if (cellPe > 2) warnings.push(`Cell Péclet number is ${F(cellPe, 3)}: the first-order upwind scheme adds numerical diffusion of order u·Δx/2 (${F(Um * dx / 2, 2)} m²/s), which smears the concentration front more than physical diffusion does.`);
   if (change > 1e-8) warnings.push(`The transport iteration stopped after ${sweeps} sweeps with a remaining change of ${F(change, 2)} of the inlet concentration (diffusion-dominated case converges slowly); the species balance residual shows the resulting error.`);
+  if (sig > 0.5 && corr < 2) warnings.push('The permeability varies from cell to cell (correlation length below about one cell): the harmonic face averaging of the finite-volume scheme then underestimates the effective permeability systematically. Use at least two or three smoothing passes or a finer grid so that each permeability patch spans several cells.');
   if (sig > 2) warnings.push('Strong heterogeneity (σ_lnK > 2): the result depends on the particular realisation; average several seeds and refine the grid before drawing conclusions.');
   if (!sol.converged) warnings.push('The pressure solver did not reach its tolerance; flow results are approximate.');
   warnings.push('Single-phase steady Darcy flow on a statistically generated permeability field (not a measured microstructure); mechanical dispersion and permeability change by deposition are not included.');
@@ -190,8 +215,10 @@ function runDarcy2D(inp) {
     summary: `Darcy flow through the ${F(Lx, 3)} m × ${F(Ly, 3)} m × ${F(th, 3)} m slab under ${F(dP / 1e3, 4)} kPa gives ${F(Qm * 1e6, 3)} mL/s and an effective permeability of ${F(Keff, 3)} m² (${F(Keff / Kg, 3)} times the geometric mean). The outlet flow-uniformity index is ${F(unif, 3)} and the peak velocity is ${F(umax / Math.max(Um, 1e-300), 3)} times the mean. The precursor is ${F(100 * X, 4)} % consumed (outlet ${F(cOut * cin, 3)} mol/m³, minimum ${F(cmin * cin, 3)} mol/m³) at Da = ${F(Da, 3)}.`,
     kpis: [
       kpi('Q', 'Volumetric flow rate', Qm, 'm³/s', 'Sum of the face fluxes through the inlet (equal to the outlet within the solver tolerance); published for reactor and scale-up suites.'),
-      kpi('Keff', 'Effective permeability', Keff, 'm²', 'QμL/(AΔP) of the heterogeneous slab. For a 2-D log-normal field theory predicts the geometric mean; departures reflect finite size and correlation.'),
+      kpi('Keff', 'Effective permeability', Keff, 'm²', 'QμL/(AΔP) of the heterogeneous slab. For a 2-D log-normal field theory predicts the geometric mean; departures of this single realisation reflect finite size and sampling (see the ensemble mean).'),
       kpi('Krat', 'K_eff / geometric mean', Keff / Kg, '', 'Ratio to the geometric-mean permeability; values well above one indicate a connected high-permeability channel across the domain.'),
+      kpi('Krat_ens', 'Ensemble-mean K_eff / geometric mean', ensMean, '', `Mean of K_eff/K_g over ${nens} independent seeded realisations of the same statistics (seeds ${seed}, ${seed} + 10007, …). For a statistically isotropic two-dimensional log-normal field the exact infinite-medium result is one; the harmonic face averaging of the finite-volume scheme lowers it by a few per cent when the correlation length is below about two cells.`),
+      kpi('Krat_se', 'Standard error of the ensemble mean', ensSE, '', nens > 1 ? `Sample standard deviation of the ${nens} ratios divided by √${nens}: the sampling uncertainty of the ensemble mean. A single realisation scatters by about ${F(ensSE * Math.sqrt(nens), 2)}.` : 'Only one realisation was requested, so no sampling uncertainty can be estimated; raise the number of realisations.'),
       kpi('unif', 'Outlet flow-uniformity index', unif, '', '1 − Σ|q_j − q̄|/(2Σq_j): one means perfectly uniform outflow, lower values mean channelling.', unif > 0.9 ? true : unif < 0.7 ? false : null),
       kpi('chan', 'Peak-to-mean velocity ratio', umax / Math.max(Um, 1e-300), '', 'Largest cell velocity divided by the mean Darcy velocity: a measure of preferential flow paths.'),
       kpi('U', 'Mean Darcy velocity', Um, 'm/s', 'Flow rate per unit cross-section; the mean pore velocity is this value divided by the porosity.'),

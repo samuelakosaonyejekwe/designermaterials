@@ -18,6 +18,9 @@ const get = async (url, opt) => { try { const r = await fetch(url, opt); return 
 let ok = 0; for (const f of files) { const s = await get(cdn + f); if (s === 200) ok++; else console.log('  cdn', f, s); }
 console.log(`CDN copy stored: ${ok}/${files.length} files at ${cdn}`);
 
+// Tell the CDN that the release pointer changed, so the portable launcher resolves the new version at once.
+console.log('Launcher pointer refreshed:', await get(`https://purge.jsdelivr.net/gh/${user}/${repo}@main/assets.json`));
+
 console.log('Software Heritage:', await get(`https://archive.softwareheritage.org/api/1/origin/save/git/url/${remote}/`, { method: 'POST' }));
 
 if (!process.argv.includes('--skip-archive')) {
