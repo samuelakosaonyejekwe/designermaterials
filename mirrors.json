@@ -1,6 +1,5 @@
 {"mirrors":[
 {"url":"https://samuelakosaonyejekwe.github.io/designermaterials/","host":"GitHub Pages (primary, always the newest version)"},
-{"url":"https://rawcdn.githack.com/samuelakosaonyejekwe/designermaterials/v1.1.0/index.html","host":"CDN copy of release v1.1.0 (cached permanently, independent of GitHub once cached)"},
 {"url":"https://web.archive.org/web/https://samuelakosaonyejekwe.github.io/designermaterials/","host":"Internet Archive snapshot"},
 {"url":"https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/samuelakosaonyejekwe/designermaterials","host":"Software Heritage source archive (download and run locally)"}
 ]}

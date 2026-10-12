@@ -69,7 +69,7 @@ export async function suitePage(root, id) {
     start.onclick = () => {
       const errs = validateInputs(suite, values); if (errs.length) { toast(errs[0], 'bad', 6000); return; }
       if (typeof Worker === 'undefined') { toast('Background computation is not available in this browser.', 'bad'); return; }
-      worker = new Worker(new URL('../core/worker.js', import.meta.url), { type: 'module' }); busy(true); prog.value = 0; stat.textContent = 'Starting…'; const t0 = performance.now();
+      const wurl = new URL('../core/worker.js', import.meta.url); try { worker = wurl.origin === location.origin ? new Worker(wurl, { type: 'module' }) : new Worker(URL.createObjectURL(new Blob([`import ${JSON.stringify(wurl.href)};`], { type: 'text/javascript' })), { type: 'module' }); } catch (e) { toast('Background computation could not start: ' + e.message, 'bad', 7000); return; } busy(true); prog.value = 0; stat.textContent = 'Starting…'; const t0 = performance.now();
       worker.onmessage = ev => { const m = ev.data;
         if (m.type === 'progress') { prog.value = m.fraction || 0; stat.textContent = `Step ${m.step?.toLocaleString() ?? '—'} of ${m.steps?.toLocaleString() ?? '—'} · simulated ${fmt(m.simTime, 4)} s · about ${fmtT(m.etaSeconds ?? 0)} left` + (m.maxT ? ` · T max ${fmt(m.maxT, 4)} K` : '') + (m.meanLength ? ` · mean length ${fmt(m.meanLength * 1e9, 4)} nm` : ''); }
         else if (m.type === 'done') { busy(false); worker.terminate(); worker = null; last = finishRun(suite, id, values, m.result, m.runtime, { origin: { ...origin } }); renderResults(last); stat.textContent = `Full-resolution run finished in ${fmtT((performance.now() - t0) / 1000)}. Results are shown on the right.`; toast('Full-resolution run finished', 'ok', 6000); }
