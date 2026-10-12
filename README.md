@@ -39,7 +39,7 @@ Reference data is requested by the user's browser directly from public services 
 
 ## Hosting and mirrors
 
-The app is a folder of static files. `mirrors.json` lists every address it is published at. `node tools/publish-mirrors.mjs <tag>` publishes a tagged release to independent copies that need no account: a permanently cached CDN copy, an Internet Archive snapshot of every file, and a Software Heritage archive of the source. `tools/deploy-mirrors.sh` pushes the same commit to any additional git remotes (GitLab, Codeberg, …). Installed copies continue to work offline regardless of host availability.
+The app is a folder of static files. `mirrors.json` lists every address it is published at. `node tools/publish-mirrors.mjs <tag>` publishes a tagged release to independent copies that need no account: a permanently stored CDN copy that `launcher.html` runs the app from, and a Software Heritage archive of the source. `tools/deploy-mirrors.sh` pushes the same commit to any additional git remotes (GitLab, Codeberg, …). Installed copies continue to work offline regardless of host availability.
 
 ## Layout
 
