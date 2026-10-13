@@ -1,5 +1,9 @@
 # Changes
 
+## 1.3.1
+- Single-file edition: the complete application as one self-contained document (Install & settings › Mirrors). It runs from any folder, drive or server with no other files, and is the copy kept on the Internet Archive, so that mirror is complete and consistent after a single save.
+- Full-resolution runs fall back to computing on the page where background workers are not allowed.
+
 ## 1.3.0
 - Published experiments: solvers are now compared with measured results from the literature (sources cited with DOI), and each suite's Credibility tab shows whether your case lies near a published experiment — independent evidence without measurements of your own.
 - Models corrected where experiments disagreed (results change):

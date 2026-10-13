@@ -42,6 +42,7 @@ const installBtn = h('button.btn.sm.primary', { hidden: true, onclick: install, 
 // ---- service worker ----
 let reg = null, swState = 'Offline support is starting…';
 async function initSW() {
+  if (globalThis.__DM_STANDALONE__) { swState = 'Single-file edition: everything is inside this one document, so it already works offline wherever the file is kept.'; return; }
   if (!('serviceWorker' in navigator)) { swState = 'This browser does not support offline installation; the app still works online.'; return; }
   const hadController = !!navigator.serviceWorker.controller;
   try {
@@ -73,7 +74,7 @@ const ctx = { applyTheme, install, canInstall: () => !!deferred, swStatus: () =>
 const net = h('span#net');
 const syncNet = () => { const on = navigator.onLine !== false; net.textContent = on ? 'Online · live data' : 'Offline · cached data'; net.classList.toggle('off', !on); };
 function shell(spec) {
-  topBar.replaceChildren(h('button.iconbtn', { 'aria-label': 'Menu', id: 'menuBtn', onclick: () => side.classList.toggle('open') }, icon('menu', 18)), h('a.brand', { href: '#/' }, h('img', { src: 'icons/icon.svg', alt: '', width: 28, height: 28 }), h('span', 'Designer Materials')), h('div.navpair', { role: 'group', 'aria-label': 'History' }, backBtn, fwdBtn), h('div.grow'), net, installBtn,
+  topBar.replaceChildren(h('button.iconbtn', { 'aria-label': 'Menu', id: 'menuBtn', onclick: () => side.classList.toggle('open') }, icon('menu', 18)), h('a.brand', { href: '#/' }, h('img', { src: globalThis.__DM_ICON__ || 'icons/icon.svg', alt: '', width: 28, height: 28 }), h('span', 'Designer Materials')), h('div.navpair', { role: 'group', 'aria-label': 'History' }, backBtn, fwdBtn), h('div.grow'), net, installBtn,
     h('button.iconbtn', { 'aria-label': 'Switch light / dark', title: 'Switch light / dark', onclick: () => { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); prefs.set('theme', cur === 'dark' ? 'light' : 'dark'); applyTheme(); route(true); } }, icon('sun', 18)));
   side.replaceChildren(...NAV.map(([href, ic, label]) => h('a', { href, 'data-nav': href }, icon(ic, 18), label)), h('div.sep', '29 engineering suites'), ...spec.groups.map((g, k) => h('div.sgroup', { class: 'g' + (k + 1) }, h('div.sghead', h('i'), g.name), g.suites.map(i => spec.suites[i - 1]).map(s => h('a.mini', { href: `#/suite/${s.id}`, 'data-nav': `#/suite/${s.id}`, title: s.resp }, h('span.sn', String(s.id).padStart(2, '0')), h('span.st', s.name))))));
   bottom.replaceChildren(...[NAV[0], NAV[1], NAV[2], NAV[3], NAV[5]].map(([href, ic, label]) => h('a', { href, 'data-nav': href }, icon(ic, 20), label.split(' ')[0])));

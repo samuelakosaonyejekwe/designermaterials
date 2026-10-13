@@ -34,8 +34,9 @@ jobs:
         run: node tools/fetch-live.mjs || true
       - name: Assemble site
         run: |
+          node tools/build-standalone.mjs
           mkdir _site
-          cp -r index.html launcher.html boot.js sw.js manifest.webmanifest mirrors.json assets.json CHANGELOG.md .nojekyll css js data icons vendor _site/
+          cp -r index.html standalone.html launcher.html boot.js sw.js manifest.webmanifest mirrors.json assets.json CHANGELOG.md .nojekyll css js data icons vendor _site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

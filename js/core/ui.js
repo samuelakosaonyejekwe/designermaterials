@@ -67,3 +67,11 @@ export function parseCSV(text) {
   const rows = lines.slice(hasHeader ? 1 : 0).map(l => split(l).map(c => c !== '' && !Number.isNaN(Number(c)) ? Number(c) : c));
   return { columns, rows };
 }
+
+// Background worker for long computations. In the single-file edition the worker is started from the page's own bundle.
+export function makeWorker() {
+  if (typeof Worker === 'undefined') throw new Error('Background computation is not available in this browser.');
+  if (globalThis.__DM_STANDALONE__) return new Worker(URL.createObjectURL(new Blob([document.getElementById('dm-bundle').textContent], { type: 'text/javascript' })), { type: 'module' });
+  const u = new URL('./worker.js', import.meta.url);
+  return u.origin === location.origin ? new Worker(u, { type: 'module' }) : new Worker(URL.createObjectURL(new Blob([`import ${JSON.stringify(u.href)};`], { type: 'text/javascript' })), { type: 'module' });
+}

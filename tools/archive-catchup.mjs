@@ -8,10 +8,12 @@ import { execSync } from 'node:child_process';
 
 const budget = (Number(process.argv[2]) || 20) * 60e3, t0 = Date.now();
 const remote = execSync('git remote get-url origin').toString().trim().replace(/\.git$/, ''), [, user, repo] = remote.match(/github\.com[:/]([^/]+)\/(.+)$/);
-const pages = `https://${user}.github.io/${repo}/`, A = JSON.parse(fs.readFileSync('assets.json', 'utf8')), files = ['', ...A.files.filter(f => f !== 'index.html'), 'assets.json', 'sw.js'];
+const pages = `https://${user}.github.io/${repo}/`, A = JSON.parse(fs.readFileSync('assets.json', 'utf8')), files = ['standalone.html', '', ...A.files.filter(f => f !== 'index.html'), 'assets.json', 'sw.js'];
+// standalone.html comes first: it is the whole application in one document, so the archive copy is complete and
+// consistent as soon as that single file has been saved.
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const b32 = buf => { const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = 0, val = 0, out = ''; for (const b of buf) { val = (val << 8) | b; bits += 8; while (bits >= 5) { out += abc[(val >>> (bits - 5)) & 31]; bits -= 5; } } if (bits) out += abc[(val << (5 - bits)) & 31]; return out; };
-const digest = f => b32(crypto.createHash('sha1').update(fs.readFileSync(f || 'index.html')).digest());
+const digest = f => fs.existsSync(f || 'index.html') ? b32(crypto.createHash('sha1').update(fs.readFileSync(f || 'index.html')).digest()) : 'missing';
 const archived = async url => { try { const r = await fetch(`https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(url)}&output=json&limit=-1&fl=digest,statuscode&filter=statuscode:200`); if (!r.ok) return null; const j = await r.json(); return j.length > 1 ? j[j.length - 1][0] : ''; } catch { return null; } };
 
 let current = 0, saved = 0, pending = [];

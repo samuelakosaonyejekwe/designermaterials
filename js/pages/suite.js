@@ -1,6 +1,6 @@
 // Suite workspace: inputs → simulation → explained outputs, equations, checks, recommendations,
 // sensitivity / uncertainty, specification knowledge and live reference data.
-import { h, icon, toast, download, tabs, table, toCSV, parseCSV, fileBytes, debounce } from '../core/ui.js';
+import { h, icon, toast, download, tabs, table, toCSV, parseCSV, fileBytes, debounce, makeWorker } from '../core/ui.js';
 import { fmt } from '../core/num.js';
 import { lineChart, heatmap, barChart, histChart } from '../core/plot.js';
 import { viewer } from '../core/view3d.js';
@@ -69,12 +69,16 @@ export async function suitePage(root, id) {
     start.onclick = () => {
       const errs = validateInputs(suite, values); if (errs.length) { toast(errs[0], 'bad', 6000); return; }
       if (typeof Worker === 'undefined') { toast('Background computation is not available in this browser.', 'bad'); return; }
-      const wurl = new URL('../core/worker.js', import.meta.url); try { worker = wurl.origin === location.origin ? new Worker(wurl, { type: 'module' }) : new Worker(URL.createObjectURL(new Blob([`import ${JSON.stringify(wurl.href)};`], { type: 'text/javascript' })), { type: 'module' }); } catch (e) { toast('Background computation could not start: ' + e.message, 'bad', 7000); return; } busy(true); prog.value = 0; stat.textContent = 'Starting…'; const t0 = performance.now();
+      try { worker = makeWorker(); } catch (e) { toast('Background computation could not start: ' + e.message, 'bad', 7000); return; } busy(true); prog.value = 0; stat.textContent = 'Starting…'; const t0 = performance.now();
+      const worker_progress = m => { prog.value = m.fraction || 0; stat.textContent = `Step ${m.step?.toLocaleString() ?? '—'} of ${m.steps?.toLocaleString() ?? '—'} · simulated ${fmt(m.simTime, 4)} s · about ${fmtT(m.etaSeconds ?? 0)} left` + (m.maxT ? ` · T max ${fmt(m.maxT, 4)} K` : '') + (m.meanLength ? ` · mean length ${fmt(m.meanLength * 1e9, 4)} nm` : ''); };
       worker.onmessage = ev => { const m = ev.data;
-        if (m.type === 'progress') { prog.value = m.fraction || 0; stat.textContent = `Step ${m.step?.toLocaleString() ?? '—'} of ${m.steps?.toLocaleString() ?? '—'} · simulated ${fmt(m.simTime, 4)} s · about ${fmtT(m.etaSeconds ?? 0)} left` + (m.maxT ? ` · T max ${fmt(m.maxT, 4)} K` : '') + (m.meanLength ? ` · mean length ${fmt(m.meanLength * 1e9, 4)} nm` : ''); }
+        if (m.type === 'progress') worker_progress(m);
         else if (m.type === 'done') { busy(false); worker.terminate(); worker = null; last = finishRun(suite, id, values, m.result, m.runtime, { origin: { ...origin } }); renderResults(last); stat.textContent = `Full-resolution run finished in ${fmtT((performance.now() - t0) / 1000)}. Results are shown on the right.`; toast('Full-resolution run finished', 'ok', 6000); }
         else if (m.type === 'error') { busy(false); worker.terminate(); worker = null; stat.textContent = 'The run stopped: ' + m.message; toast(m.message, 'bad', 8000); } };
-      worker.onerror = ev => { busy(false); stat.textContent = 'The background solver could not start: ' + (ev.message || 'unknown error'); };
+      // Some contexts (for example a page opened straight from disk) do not allow background workers: run on the page instead.
+      worker.onerror = async () => { try { worker.terminate(); } catch { /* already stopped */ } worker = null; let stopNow = false; stop.onclick = () => { stopNow = true; stat.textContent = 'Stopping at the next time step…'; }; stat.textContent = 'Background workers are not available here; computing on the page (the interface stays usable but slower)…';
+        try { const res = await suite.run({ ...values }, { bus: Object.fromEntries(Object.entries(project.bus).map(([k, v]) => [k, v.value])), hifi: { ...hv }, cancelled: () => stopNow, onProgress: m => worker_progress(m) }); busy(false); last = finishRun(suite, id, values, res, performance.now() - t0, { origin: { ...origin } }); renderResults(last); stat.textContent = `Full-resolution run finished in ${fmtT((performance.now() - t0) / 1000)}. Results are shown on the right.`; }
+        catch (e) { busy(false); stat.textContent = 'The run stopped: ' + e.message; } };
       worker.postMessage({ type: 'run', id, inputs: { ...values }, hifi: { ...hv }, bus: Object.fromEntries(Object.entries(project.bus).map(([k, v]) => [k, v.value])) });
     };
     stop.onclick = () => { if (worker) { worker.postMessage({ type: 'cancel' }); stat.textContent = 'Stopping at the next time step…'; } };
