@@ -1,5 +1,6 @@
 {"mirrors":[
 {"url":"https://samuelakosaonyejekwe.github.io/designermaterials/","host":"GitHub Pages (primary, always the newest version)"},
-{"url":"https://samuelakosaonyejekwe.github.io/designermaterials/launcher.html","host":"Portable launcher: save this file; it runs the app from an independent CDN copy even when the primary address is down"},
+{"url":"https://web.archive.org/web/2026/https://samuelakosaonyejekwe.github.io/designermaterials/","host":"Internet Archive copy — a second live address on independent infrastructure, re-archived at every release"},
+{"url":"https://samuelakosaonyejekwe.github.io/designermaterials/launcher.html","host":"Portable launcher — save this file; it starts the newest release from an independent content-delivery network even when the addresses above are down"},
 {"url":"https://archive.softwareheritage.org/browse/origin/directory/?origin_url=https://github.com/samuelakosaonyejekwe/designermaterials","host":"Software Heritage source archive (download and run locally)"}
 ]}

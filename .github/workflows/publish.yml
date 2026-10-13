@@ -40,3 +40,8 @@ jobs:
           path: _site
       - id: deploy
         uses: actions/deploy-pages@v4
+      - name: Refresh independent copies
+        if: github.event_name == 'push'
+        continue-on-error: true
+        timeout-minutes: 45
+        run: node tools/publish-mirrors.mjs "v$(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).version)")"

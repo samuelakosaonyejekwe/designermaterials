@@ -26,8 +26,8 @@ console.log('Software Heritage:', await get(`https://archive.softwareheritage.or
 if (!process.argv.includes('--skip-archive')) {
   let saved = 0;
   for (const f of ['', ...files.filter(f => f !== 'index.html')]) {
-    let s; for (let attempt = 0; attempt < 3; attempt++) { s = await get('https://web.archive.org/save/' + pages + f, { redirect: 'follow' }); if (s === 200) break; await sleep(20000); }
-    if (s === 200) saved++; else console.log('  archive', f || '(root)', s); await sleep(4500);
+    let s; for (let attempt = 0; attempt < 4; attempt++) { s = await get('https://web.archive.org/save/' + pages + f, { redirect: 'follow' }); if (s === 200) break; await sleep(40000); }
+    if (s === 200) saved++; else console.log('  archive', f || '(root)', s); await sleep(7000);
   }
   console.log(`Internet Archive: ${saved}/${files.length} files saved — https://web.archive.org/web/${pages}`);
 }

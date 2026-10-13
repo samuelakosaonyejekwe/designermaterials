@@ -40,7 +40,7 @@ if (remote) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Designer Materials</title>
-<meta http-equiv="Content-Security-Policy" content="default-src https://cdn.jsdelivr.net; script-src https://cdn.jsdelivr.net 'wasm-unsafe-eval'; style-src https://cdn.jsdelivr.net; img-src https://cdn.jsdelivr.net data: blob:; font-src https://cdn.jsdelivr.net; worker-src https://cdn.jsdelivr.net blob:; object-src 'none'; form-action 'none'; connect-src ${fs.readFileSync('index.html', 'utf8').match(/connect-src 'self' ([^"]+)"/)[1]} https://cdn.jsdelivr.net">
+<meta http-equiv="Content-Security-Policy" content="default-src https://cdn.jsdelivr.net; script-src https://cdn.jsdelivr.net 'wasm-unsafe-eval'; style-src https://cdn.jsdelivr.net; img-src https://cdn.jsdelivr.net data: blob:; font-src https://cdn.jsdelivr.net; worker-src https://cdn.jsdelivr.net blob:; object-src 'none'; form-action 'none'; connect-src ${fs.readFileSync('index.html', 'utf8').match(/connect-src 'self' ([^"]+)"/)[1]} https://cdn.jsdelivr.net https://${remote[1]}.github.io">
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="light dark">
 </head>

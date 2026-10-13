@@ -1,5 +1,10 @@
 # Changes
 
+## 1.2.1
+- Parasolid (.x_t, .x_b), SOLIDWORKS part and Siemens NX part geometry is now read: the Parasolid B-rep is translated to STEP and tessellated by the OpenCASCADE kernel.
+- A second live address on independent infrastructure (Internet Archive), refreshed automatically at every release together with the content-delivery copy and the source archive.
+- The portable launcher fetches the newest server-refreshed data snapshot.
+
 ## 1.2.0
 - Reference data is now also collected on a server schedule and delivered to every device as one snapshot: live values, the newest arXiv preprints per suite, and measured crystal structures from the Crystallography Open Database.
 - Validate and calibrate a case directly on each suite's Credibility tab: enter your measurements to obtain an "experimentally validated" status for that operating point, or fit an input so the model reproduces a measured result.

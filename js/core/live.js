@@ -74,7 +74,10 @@ export const TOOL_REPOS = ['materialsproject/pymatgen', 'lammps/lammps', 'QEF/q-
 
 // ---- server-refreshed snapshot (same origin): feeds, arXiv preprints and Crystallography Open Database entries ----
 let snapP = null, snapAt = 0;
-export function snapshot(force) { if (!snapP || force || Date.now() - snapAt > 15 * 60e3) { snapAt = Date.now(); snapP = fetch('data/live/snapshot.json').then(r => r.ok ? r.json() : null).catch(() => null); } return snapP; }
+export function snapshot(force) { if (!snapP || force || Date.now() - snapAt > 15 * 60e3) { snapAt = Date.now(); snapP = (async () => {
+    // When started from the portable launcher the page files come from a release copy, so ask the primary address for the newest snapshot first.
+    const urls = ['data/live/snapshot.json']; try { if (new URL(document.baseURI).origin !== location.origin) { const m = await (await fetch('mirrors.json')).json(); urls.unshift(new URL('data/live/snapshot.json', m.mirrors[0].url).href); } } catch { /* use the local copy */ }
+    for (const u of urls) { try { const r = await fetch(u); if (r.ok) return await r.json(); } catch { /* try the next address */ } } return null; })(); } return snapP; }
 export const arxiv = async id => { const s = await snapshot(); return s?.arxiv?.[id] ? { data: s.arxiv[id], at: Date.parse(s.at), cached: true, stale: false } : null; };
 export const cod = async formula => { const s = await snapshot(); return s?.cod?.[formula] ? { data: s.cod[formula], at: Date.parse(s.at) } : null; };
 
