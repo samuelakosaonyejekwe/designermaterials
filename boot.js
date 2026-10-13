@@ -1,6 +1,6 @@
 // Resolves the newest published release and starts the app from the content-delivery network.
 (function () {
-  var root = 'https://cdn.jsdelivr.net/gh/samuelakosaonyejekwe/designermaterials', fallback = 'v1.3.1', done = false;
+  var root = 'https://cdn.jsdelivr.net/gh/samuelakosaonyejekwe/designermaterials', fallback = 'v1.4.0', done = false;
   function start(tag) {
     if (done) return; done = true; var base = root + '@' + tag + '/';
     var b = document.createElement('base'); b.href = base; document.head.appendChild(b);

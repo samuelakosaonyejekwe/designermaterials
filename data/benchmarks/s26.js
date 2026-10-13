@@ -62,6 +62,16 @@ const S0 = 2 / 1.128, SIG = spc([...Array.from({ length: 20 }, (_, i) => [i % 2 
 const SHIFT = { mode: 'auto', spcData: SIG, nBase: 20, lamE: 0.2, LE: 3, kC: 0.5, hC: 5 };
 const SHIFT_REF = 'Tabular CUSUM and EWMA control-chart recursions — Montgomery, Introduction to Statistical Quality Control';
 
+// ---------- published measured data sets (NIST/SEMATECH e-Handbook of Statistical Methods) ----------
+// Section 6.3.2.2, table "Example of moving range": flow rate of the first ten batches of a new process, transcribed in batch order
+const NIST_FLOW = 'batch,flowrate\n' + [49.6, 47.6, 49.9, 51.3, 47.8, 51.2, 52.6, 52.4, 53.6, 52.1].map((v, i) => `${i + 1},${v}`).join('\n');
+// Section 5.6.1.1, table "Data Used in the Analysis": eddy-current probe impedance (ohm) of a 2³ full factorial in number of wire turns (90/180),
+// winding distance (0.38/1.14) and wire gauge (40/48), coded −1/+1, in the standard order of the source
+const NIST_EDDY = 'turns,winding_distance,wire_gauge,impedance_ohm\n' + [[-1, -1, -1, 1.70], [1, -1, -1, 4.57], [-1, 1, -1, 0.55], [1, 1, -1, 3.39], [-1, -1, 1, 1.51], [1, -1, 1, 4.59], [-1, 1, 1, 0.67], [1, 1, 1, 4.29]].map(r => r.join(',')).join('\n');
+const NIST_HB = { authors: 'National Institute of Standards and Technology; SEMATECH', journal: 'NIST/SEMATECH e-Handbook of Statistical Methods (web edition, pages undated; retrieved October 2026)', year: null, doi: null };
+const NIST_FLOW_SRC = { ...NIST_HB, title: 'Individuals Control Charts (section 6.3.2.2)', url: 'https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc322.htm' };
+const NIST_FLOW_COND = 'Flow rate of the first 10 batches of a new process, one measurement per batch (individuals / moving-range chart of 9 moving ranges, x̄ = 50.81, MR̄ = 1.8778)';
+
 export default [
   // ----- reactor design -----
   { id: 's26-batch-first-order-time', suite: 26, title: 'Batch reactor, first-order kinetics: time for 90 % conversion', mode: 'reactor', inputs: { ...KIN1, rtype: 'batch' }, kpi: 't_rxn', expected: Math.log(10) / 1e-3, tol: 1e-9, kind: 'analytical', reference: LEV_REF, note: 'X = 1 − e^(−kt) ⇒ t = −ln(1 − X)/k = ln 10/10⁻³ s⁻¹ = 2302.6 s.' },
@@ -146,4 +156,20 @@ export default [
     note: 'In units of σ the EWMA deviation after the shift is 0.55, 0.94, 1.25 against the asymptotic limit L·√(λ/(2 − λ)) = 1.0, first exceeded at observation 23.' },
   { id: 's26-cusum-arl0', suite: 26, title: 'Two-sided tabular CUSUM (k = 0.5, h = 5): in-control average run length', mode: 'auto', inputs: { mode: 'auto', kC: 0.5, hC: 5 }, kpi: 'arl0', expected: 465, tol: 0.02, kind: 'numerical-reference', reference: 'Tabulated average run lengths of the tabular CUSUM (ARL₀ = 465 for k = ½, h = 5) — Montgomery, Introduction to Statistical Quality Control; Hawkins & Olwell, Cumulative Sum Charts and Charting for Quality Improvement',
     note: "The suite uses Siegmund's closed-form approximation (h replaced by h + 1.166), which is accurate to about 1–2 % against the tabulated Markov-chain value." },
+  // ----- published experiments -----
+  { id: 's26-exp-nist-flowrate-imr-ucl', suite: 26, title: 'NIST flow-rate batches: upper control limit of the individuals chart', mode: 'spc', inputs: { mode: 'spc', spcData: NIST_FLOW, usl: 56, lsl: 45, target: 50 }, kpi: 'ucl', expected: 55.8041, tol: 1e-4, kind: 'experiment',
+    measured: { value: 55.8041, uncertainty: null, unit: 'flow-rate units of the source' }, source: NIST_FLOW_SRC, conditions: NIST_FLOW_COND, match: ['spcData'],
+    reference: 'NIST/SEMATECH e-Handbook of Statistical Methods, section 6.3.2.2 (Individuals Control Charts)',
+    note: 'Measured data and reduced value from the section "Example of moving range" / "Limits for the moving range chart": UCL = 50.81 + 3·1.8778/1.128 = 55.8041. The ten measurements are transcribed from the table of the source; the suite recomputes the mean, the mean moving range and the limit from them. The source rounds the mean moving range to 1.8778, hence the tolerance of 0.01 %. The specification limits and the target entered here are not given by the source and do not enter the control limits.' },
+  { id: 's26-exp-nist-flowrate-imr-lcl', suite: 26, title: 'NIST flow-rate batches: lower control limit of the individuals chart', mode: 'spc', inputs: { mode: 'spc', spcData: NIST_FLOW, usl: 56, lsl: 45, target: 50 }, kpi: 'lcl', expected: 45.8159, tol: 1e-4, kind: 'experiment',
+    measured: { value: 45.8159, uncertainty: null, unit: 'flow-rate units of the source' }, source: NIST_FLOW_SRC, conditions: NIST_FLOW_COND, match: ['spcData'],
+    reference: 'NIST/SEMATECH e-Handbook of Statistical Methods, section 6.3.2.2 (Individuals Control Charts)',
+    note: 'Same data set; LCL = 50.81 − 3·1.8778/1.128 = 45.8159 as stated under "Limits for the moving range chart". Tolerance 0.01 % for the rounding of the published intermediate values. The specification limits and the target entered here are not given by the source and do not enter the control limits.' },
+  { id: 's26-exp-nist-eddy-current-turns-effect', suite: 26, title: 'NIST eddy-current probe 2³ factorial: effect of the number of wire turns on the measured impedance', mode: 'doe', inputs: { mode: 'doe', doeData: NIST_EDDY, goal: 'max' }, kpi: 'top', expected: 3.1025, tol: 1e-6, kind: 'experiment',
+    measured: { value: 3.1025, uncertainty: null, unit: 'ohm' },
+    source: { ...NIST_HB, title: 'Eddy Current Probe Sensitivity Case Study (sections 5.6.1.1 Background and Data, 5.6.1.3 Interaction Effects, 5.6.1.5 Estimate Main and Interaction Effects)', url: 'https://www.itl.nist.gov/div898/handbook/pri/section6/pri611.htm' },
+    conditions: 'Eddy-current crack-detector probe (study by Capobianco, Splett and Iyer, NIST): 2³ full factorial, eight runs in random order, number of wire turns 90/180, winding distance 0.38/1.14, wire gauge 40/48; response: probe impedance (sensitivity) in ohm',
+    match: ['doeData'],
+    reference: 'NIST/SEMATECH e-Handbook of Statistical Methods, section 5.6.1 (Eddy Current Probe Sensitivity Case Study)',
+    note: 'The eight measured impedances are transcribed from the table in section 5.6.1.1. Section 5.6.1.5 tabulates the least-squares coefficient of X1 (number of turns) as 1.55125 and states that the effects are twice the coefficients; section 5.6.1.3 names X1 the most important effect with magnitude 3.1025 (printed there with a minus sign, although the tabulated coefficient and the data are positive). The suite identifies the same factor as the largest effect and computes it from the data; agreement is exact to rounding because the design is orthogonal. The grand mean of the source (2.65875) is reproduced as well.' },
 ];

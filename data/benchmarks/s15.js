@@ -298,4 +298,14 @@ export default [
     reference: 'Ledbetter & Naimon, J. Phys. Chem. Ref. Data 3, 897 (1974)',
     note: 'Measured polycrystal value from table 10 (G = 0.454 ± 0.012 × 10¹¹ N/m²). The suite uses its built-in single-crystal constants of copper. The source gives 47.3 GPa for the arithmetic Voigt–Reuss–Hill average and notes that it lies above the observed shear modulus; the tolerance is the 2.6 % standard error of the measurement plus that 4 % averaging bias.'
   },
+  {
+    id: 's15-exp-yao-mass-in-mass-zero-mass', suite: 15, title: 'Mass-in-mass unit on an air track: measured zero-effective-mass frequency (upper edge of the negative-mass band)', mode: 'massinmass',
+    inputs: { mode: 'massinmass', m1: 0.1011, m2: 0.04647, k2: 74, k1: 117, a_cell: 137, Ncell: 7 }, kpi: 'neg_hi', expected: 7.57, tol: 0.03, kind: 'experiment',
+    measured: { value: 7.57, uncertainty: null, unit: 'Hz' },
+    source: { authors: 'Yao, S., Zhou, X. & Hu, G.', title: 'Experimental study on negative effective mass in a 1D mass–spring system', journal: 'New J. Phys.', year: 2008, doi: '10.1088/1367-2630/10/4/043020', url: 'https://iopscience.iop.org/article/10.1088/1367-2630/10/4/043020/pdf' },
+    conditions: 'Aluminium blocks on an air track: outer (connected) blocks M₀ = 101.10 g, inner block m = 46.47 g held by two springs of 37 N/m each; units joined by 117 N/m springs with a period of 137 mm, seven units; harmonic base excitation, displacements recorded with a CCD camera',
+    match: ['m1', 'm2', 'k2'],
+    reference: 'Yao, Zhou & Hu, New J. Phys. 10, 043020 (2008)',
+    note: 'Sections 3 and 4 of the source (open access). The inner block is held by two 37 N/m springs acting in parallel, so k₂ = 74 N/m. The measured quantity is the frequency at which the amplitude ratio of inner to outer block is closest to M₀/m (x/X ≈ 2.03 at 7.57 Hz against M₀/m ≈ 2.17), i.e. zero total momentum and zero effective mass; the seven-unit chain then moves as a rigid bar. The lossless value is f₀√(1 + m₂/m₁) = 7.67 Hz; the authors attribute the 1.3 % shift to slight dissipation (spring viscosity, residual track friction). The tolerance covers that shift and the unstated tolerance of the spring constants (frequency ∝ √k₂). Lattice spring, period and cell count do not enter this KPI. The source also reports a transmittance below −20 dB inside the gap of the seven-unit chain, which the suite reproduces qualitatively (gap 5.75–7.67 Hz against "about 5.8 to 7.6 Hz" computed in the source).'
+  },
 ];

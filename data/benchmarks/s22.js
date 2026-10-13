@@ -57,6 +57,13 @@ const DEG_EXP = 'time_h,performance\n' + Array.from({ length: 11 }, (_, i) => `$
 const DEG_LIN = 'time_h,performance\n' + Array.from({ length: 9 }, (_, i) => `${500 * i},${100 - 0.01 * 500 * i}`).join('\n');
 const SQRT_PI_2 = Math.sqrt(PI) / 2;                                 // Γ(3/2)
 
+// --- published experiment: endurance lives (millions of revolutions) of 23 deep-groove ball bearings, transcribed from the
+// specimen worksheet reproduced in appendix A of Lieblein & Zelen, J. Res. Natl. Bur. Stand. 57, 273 (1956), p. 286
+// (lot of 25, the two bearings marked "Omitted" on the worksheet excluded as in the source).
+const LZ_TABLE = 'time_to_failure_h\n' + [17.88, 28.92, 33.00, 41.52, 42.12, 45.60, 48.48, 51.84, 51.96, 54.12, 55.56, 67.80, 68.64, 68.64, 68.88, 84.12, 93.12, 98.64, 105.12, 105.84, 127.92, 128.04, 173.40].join('\n');
+const LZ_SOURCE = { authors: 'Lieblein, J.; Zelen, M.', title: 'Statistical Investigation of the Fatigue Life of Deep-Groove Ball Bearings', journal: 'J. Res. Natl. Bur. Stand. 57 (5), 273–316, Research Paper 2719', year: 1956, doi: '10.6028/jres.057.033', url: 'https://nvlpubs.nist.gov/nistpubs/jres/057/jresv57n5p273_A1b.pdf' };
+const LZ_COND = 'Endurance test of a lot of deep-groove ball bearings (bore 20 mm, outside diameter 42 mm, nine 1/4 in balls, one row) at 2000 r.p.m. with jet-oil lubrication; lives in millions of revolutions for 23 bearings (two non-fatigue failures omitted by the laboratory, three bearings marked discontinued and counted at their recorded lives)';
+
 export default [
   // ------------------------------------------------------------------ fatigue
   { id: 's22-basquin-life', suite: 22, title: 'Basquin life at half the fatigue strength coefficient', mode: 'fatigue',
@@ -254,4 +261,18 @@ export default [
   { id: 's22-rul-linear', suite: 22, title: 'Remaining useful life from an exact linear degradation path', mode: 'reliability',
     inputs: { mode: 'reliability', rel_deg: DEG_LIN, rel_trend: 'lin', rel_thr: 40 }, kpi: 'RULlo', expected: 2000, tol: 1e-6, kind: 'analytical',
     reference: 'Linear trend extrapolation; with zero residual scatter the lower prediction bound equals the point estimate' },
+
+  // ------------------------------------------------------------------ published experiments
+  { id: 's22-exp-lieblein-zelen-bearing-weibull-slope', suite: 22, title: 'Experiment: Weibull slope of the endurance lives of 23 deep-groove ball bearings', mode: 'reliability',
+    inputs: { mode: 'reliability', rel_fail: LZ_TABLE }, kpi: 'beta', expected: 2.23, tol: 0.05, kind: 'experiment',
+    measured: { value: 2.23, uncertainty: null, unit: '–' },
+    source: LZ_SOURCE, conditions: LZ_COND, match: ['rel_fail'],
+    reference: 'Lieblein & Zelen, J. Res. Natl. Bur. Stand. 57, 273 (1956), appendix A, specimen worksheet',
+    note: 'The 23 endurance lives are transcribed from the specimen worksheet on p. 286 (they are in millions of revolutions; the suite labels the time axis in hours, which does not affect the shape). The reference value is the "Slope of Curve 2.23" entered on the same worksheet by the testing laboratory from its plot on Weibull-function coordinate paper. Median-rank regression in the suite gives 2.18 (−2.2 %). Tolerance 5 %: the laboratory value is a graphical fit, and the three bearings marked "Disc." are treated as failures at their recorded lives (the suite has no censored-data method). The source notes that the worksheet estimates were not part of the data it analysed.' },
+  { id: 's22-exp-lieblein-zelen-bearing-b10', suite: 22, title: 'Experiment: B10 life of 23 deep-groove ball bearings', mode: 'reliability',
+    inputs: { mode: 'reliability', rel_fail: LZ_TABLE }, kpi: 'B10', expected: 29, tol: 0.1, kind: 'experiment',
+    measured: { value: 29, uncertainty: null, unit: '10⁶ revolutions' },
+    source: LZ_SOURCE, conditions: LZ_COND, match: ['rel_fail'],
+    reference: 'Lieblein & Zelen, J. Res. Natl. Bur. Stand. 57, 273 (1956), appendix A, specimen worksheet',
+    note: 'Reference value "B-10 29." as entered on the specimen worksheet (p. 286) by the testing laboratory from its Weibull plot, quoted to two figures; data as in the previous entry, in millions of revolutions. The suite reports the B10 life of the better-fitting of its Weibull and lognormal regressions — here the lognormal — and obtains 31.2 (+7.5 %); its Weibull parameters (β = 2.18, η = 81.6) correspond to 29.1. Tolerance 10 % for the choice of distribution, the graphical reference value and the treatment of the three discontinued bearings as failures.' },
 ];

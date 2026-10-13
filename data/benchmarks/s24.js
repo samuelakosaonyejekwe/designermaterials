@@ -89,6 +89,30 @@ const DLVO0 = (() => {
   return mx / (kB * T);
 })();
 
+// ---------- published measured data sets with certified least-squares results (NIST Statistical Reference Datasets, StRD) ----------
+// Observed data transcribed from the NIST/ITL StRD data files as [x, y] pairs in file order (the files list y first);
+// the certified values quoted in the entries are those printed in the same files. https://www.itl.nist.gov/div898/strd/
+const strd = rows => 'x,y\n' + rows.map(r => r.join(',')).join('\n');
+// Norris.dat — J. Norris (NIST), calibration of ozone monitors; 36 observations, model y = B0 + B1·x
+const STRD_NORRIS = strd([[0.2, 0.1], [337.4, 338.8], [118.2, 118.1], [884.6, 888.0], [10.1, 9.2], [226.5, 228.1], [666.3, 668.5], [996.3, 998.5], [448.6, 449.1], [777.0, 778.9], [558.2, 559.2], [0.4, 0.3],
+  [0.6, 0.1], [775.5, 778.1], [666.9, 668.8], [338.0, 339.3], [447.5, 448.9], [11.6, 10.8], [556.0, 557.7], [228.1, 228.3], [995.8, 998.0], [887.6, 888.8], [120.2, 119.6], [0.3, 0.3],
+  [0.3, 0.6], [556.8, 557.6], [339.1, 339.3], [887.2, 888.0], [999.0, 998.5], [779.0, 778.9], [11.1, 10.2], [118.3, 117.6], [229.2, 228.9], [669.1, 668.4], [448.9, 449.2], [0.5, 0.2]]);
+// DanWood.dat — energy radiated by a carbon-filament lamp (y, per cm² per second) against absolute filament temperature (x, in 1000 K); 6 observations, model y = b1·x^b2
+const STRD_DANWOOD = strd([[1.309, 2.138], [1.471, 3.421], [1.490, 3.597], [1.565, 4.340], [1.611, 4.882], [1.680, 5.660]]);
+// Misra1a.dat — D. Misra (NIST, 1978), dental research in monomolecular adsorption: volume (y) against pressure (x); 14 observations, model y = b1·(1 − exp(−b2·x))
+const STRD_MISRA1A = strd([[77.6, 10.07], [114.9, 14.73], [141.1, 17.94], [190.8, 23.93], [239.9, 29.61], [289.0, 35.18], [332.8, 40.02], [378.4, 44.82], [434.8, 50.76], [477.3, 55.05], [536.8, 61.01], [593.1, 66.40], [689.1, 75.47], [760.0, 81.78]]);
+// BoxBOD.dat — biochemical oxygen demand (y, mg/L) against incubation time (x, days); 6 observations, model y = b1·(1 − exp(−b2·x))
+const STRD_BOXBOD = strd([[1, 109], [2, 149], [3, 149], [5, 191], [7, 213], [10, 224]]);
+const strdSrc = (name, title) => ({ authors: 'National Institute of Standards and Technology, Information Technology Laboratory', title: `Statistical Reference Datasets (StRD): ${title}`, journal: 'NIST Standard Reference Database 140 (data content last updated 2003)', year: 2003, doi: '10.18434/T43G6C', url: `https://www.itl.nist.gov/div898/strd/${name}` });
+const STRD_NOTE = 'What is tested is the data reduction (unweighted least squares on the published observations), not a physical model; no sigma column is given, as in the source. The Metropolis sampling is switched off because it does not enter the compared estimate. NIST certifies the values to 11 significant digits; the tolerance of 10⁻⁶ allows for the termination criterion of the Levenberg–Marquardt iteration.';
+
+// ---------- porous zirconia: measured tensile modulus against porosity (Pabst, Gregorová, Tichá & Týnová, Ceramics − Silikáty 48 (4) 165–174, 2004) ----------
+// Table 2 of the paper, transcribed exactly as [porosity φ, tensile modulus E in GPa]; one specimen per pair. Z-P: potato starch, Z-C: corn starch.
+const PABST_ZP = strd([[0.132, 136], [0.191, 113], [0.249, 96], [0.315, 69], [0.424, 38]]);
+const PABST_ZC = strd([[0.073, 167], [0.158, 136], [0.200, 124], [0.298, 85], [0.415, 52]]);
+const PABST_SRC = { authors: 'Pabst, W.; Gregorová, E.; Tichá, G.; Týnová, E.', title: 'Effective elastic properties of alumina-zirconia composite ceramics — Part 4. Tensile modulus of porous alumina and zirconia', journal: 'Ceramics − Silikáty 48 (4), 165–174', year: 2004, doi: null, url: 'https://www.irsm.cas.cz/materialy/cs_content/2004/Pabst_CS_2004_0003.pdf' };
+const PABST_COND = 'Tetragonal zirconia (3 mol.% Y₂O₃, TZ-3YE) shaped by starch consolidation casting and fired at 1400 °C; cylindrical rods about 4 mm in diameter and 50–80 mm long; total porosity from the Archimedes bulk density (theoretical density 6.1 g/cm³), tensile modulus by the resonant frequency technique';
+const PABST_NOTE = 'The x column of the calibration table is the porosity φ and the y column the modulus in GPa; the exponential family y = a·exp(b·x) is the Spriggs relation E = E₀·exp(−Bφ) with a = E₀ and b = −B (the paper\'s Model 2; its equation is typeset as an image in the retrieved PDF, and the agreement of both parameters to four figures confirms the form). Unweighted fit, as in the source (one specimen per point, no uncertainties given). The paper states its fit parameters to four significant figures; tolerance 0.1 %. Metropolis sampling switched off (it does not enter the estimate). What is tested is the reduction of published measurements, not the physical adequacy of the Spriggs relation, which the paper itself judges too rigid.';
 export default [
   // ----- solution verification -----
   { id: 's24-gci-roache-order', suite: 24, title: 'Roache three-grid example: observed order of accuracy', mode: 'gci', inputs: ROACHE, kpi: 'order', expected: R_P, tol: 1e-6, kind: 'numerical-reference', reference: ROACHE_REF,
@@ -182,4 +206,60 @@ export default [
     note: 'Rule check, exact by definition: every gate has sufficient declared evidence within the default acceptance limits.' },
   { id: 's24-cred-gci-blocks', suite: 24, title: 'A grid convergence index above its limit stops the sequence at gate 3', mode: 'cred', inputs: { mode: 'cred', nVal: 2, gciPct: 5, gciTolC: 2, g7uq: true, g7sens: true, g8use: true, g8rev: true }, kpi: 'level', expected: 3, abs: 0, kind: 'analytical', reference: 'Sequential verification–calibration–validation logic — Oberkampf & Roy, Verification and Validation in Scientific Computing',
     note: 'Rule check, exact by definition: solution verification (gate 4) fails, so calibration and validation evidence is not credited.' },
+  // ------------------------------------------------------------------ published measured data sets (NIST StRD)
+  { id: 's24-exp-nist-norris-ozone-slope', suite: 24, title: 'NIST StRD Norris (calibration of ozone monitors, 36 observations): slope of the calibration line', mode: 'calib',
+    inputs: { mode: 'calib', cmodel: 'linear', cdata: STRD_NORRIS, bayes: false }, kpi: 'p1', expected: 1.00211681802045, tol: 1e-6, kind: 'experiment',
+    measured: { value: 1.00211681802045, uncertainty: 0.429796848199937e-3, unit: '–' },
+    source: strdSrc('lls/data/Norris.shtml', 'Norris — linear least squares regression, lower level of difficulty'),
+    conditions: 'Observed data from the calibration of ozone monitors (J. Norris, NIST): 36 pairs of readings between 0.1 and 999; straight line y = B0 + B1·x fitted by ordinary least squares',
+    match: ['cmodel'],
+    reference: 'NIST Statistical Reference Datasets, Norris (J. Norris, NIST, Calibration of Ozone Monitors) — certified regression statistics',
+    note: 'Certified value B1 = 1.00211681802045 (standard deviation of the estimate 0.429796848199937E-03) from the "Certified Regression Statistics" block of Norris.dat; the 36 observations are the "Data" block of the same file. The suite also returns the certified intercept B0 = −0.262323073774029 to 4 parts in 10⁷. ' + STRD_NOTE },
+  { id: 's24-exp-nist-norris-ozone-residual-variance', suite: 24, title: 'NIST StRD Norris (calibration of ozone monitors): residual mean square of the straight-line fit', mode: 'calib',
+    inputs: { mode: 'calib', cmodel: 'linear', cdata: STRD_NORRIS, bayes: false }, kpi: 'chi2red', expected: 0.782864662630069, tol: 1e-6, kind: 'experiment',
+    measured: { value: 0.782864662630069, uncertainty: null, unit: '(reading units)²' },
+    source: strdSrc('lls/data/Norris.shtml', 'Norris — linear least squares regression, lower level of difficulty'),
+    conditions: 'Observed data from the calibration of ozone monitors (J. Norris, NIST): 36 observations, 34 residual degrees of freedom',
+    match: ['cmodel'],
+    reference: 'NIST Statistical Reference Datasets, Norris — certified analysis-of-variance table',
+    note: 'Residual mean square 0.782864662630069 (residual sum of squares 26.6173985294224 on 34 degrees of freedom) from the "Certified Analysis of Variance Table" of Norris.dat; its square root is the certified residual standard deviation 0.884796396144373. Without a sigma column the suite\'s reduced χ² is the residual sum of squares divided by the degrees of freedom, i.e. this mean square. ' + STRD_NOTE },
+  { id: 's24-exp-nist-danwood-radiation-exponent', suite: 24, title: 'NIST StRD DanWood (energy radiated by a carbon-filament lamp against temperature): power-law exponent', mode: 'calib',
+    inputs: { mode: 'calib', cmodel: 'power', cdata: STRD_DANWOOD, bayes: false }, kpi: 'p1', expected: 3.8604055871, tol: 1e-6, kind: 'experiment',
+    measured: { value: 3.8604055871, uncertainty: 5.1726610913e-2, unit: '–' },
+    source: strdSrc('nls/data/daniel_wood.shtml', 'DanWood — nonlinear least squares regression, lower level of difficulty'),
+    conditions: 'Energy radiated from a carbon-filament lamp per cm² per second against the absolute temperature of the filament in units of 1000 K (1.309–1.680), 6 observations; data described in Daniel & Wood, Fitting Equations to Data (1980), originally from Keeping, Introduction to Statistical Inference (1962); model y = b1·x^b2',
+    match: ['cmodel'],
+    reference: 'NIST Statistical Reference Datasets, DanWood (Daniel & Wood, Fitting Equations to Data, 2nd ed., 1980) — certified values',
+    note: 'Certified b2 = 3.8604055871E+00 (standard deviation 5.1726610913E-02) from the "Certified Values" block of DanWood.dat; the suite also returns the certified b1 = 7.6886226176E-01 to 1 part in 10⁸. The exponent lies 2.7 standard deviations below the Stefan–Boltzmann value of 4. ' + STRD_NOTE },
+  { id: 's24-exp-nist-misra1a-adsorption-rate', suite: 24, title: 'NIST StRD Misra1a (monomolecular adsorption, volume against pressure): saturation-law rate constant', mode: 'calib',
+    inputs: { mode: 'calib', cmodel: 'firstorder', cdata: STRD_MISRA1A, bayes: false }, kpi: 'p1', expected: 5.5015643181e-4, tol: 1e-6, kind: 'experiment',
+    measured: { value: 5.5015643181e-4, uncertainty: 7.2668688436e-6, unit: '1/(pressure unit)' },
+    source: strdSrc('nls/data/misra1a.shtml', 'Misra1a — nonlinear least squares regression, lower level of difficulty'),
+    conditions: 'NIST study on dental research in monomolecular adsorption (D. Misra, 1978): adsorbed volume against pressure, 14 observations, pressures 77.6–760.0; model y = b1·(1 − exp(−b2·x))',
+    match: ['cmodel'],
+    reference: 'NIST Statistical Reference Datasets, Misra1a (D. Misra, NIST, Dental Research Monomolecular Adsorption Study, 1978) — certified values',
+    note: 'Certified b2 = 5.5015643181E-04 (standard deviation 7.2668688436E-06) from the "Certified Values" block of Misra1a.dat; the suite also returns the certified b1 = 2.3894212918E+02 to 2 parts in 10⁹ and the certified residual standard deviation 1.0187876330E-01. The data cover only the nearly linear start of the saturation curve, so b1 and b2 are strongly correlated (the suite reports a collinearity index of about 29), which is what makes the set a useful test. The source states no units. ' + STRD_NOTE },
+  { id: 's24-exp-nist-boxbod-ultimate-demand', suite: 24, title: 'NIST StRD BoxBOD (biochemical oxygen demand against incubation time): ultimate demand', mode: 'calib',
+    inputs: { mode: 'calib', cmodel: 'firstorder', cdata: STRD_BOXBOD, bayes: false }, kpi: 'p0', expected: 213.80940889, tol: 1e-6, kind: 'experiment',
+    measured: { value: 213.80940889, uncertainty: 12.354515176, unit: 'mg/L' },
+    source: strdSrc('nls/data/boxbod.shtml', 'BoxBOD — nonlinear least squares regression, higher level of difficulty'),
+    conditions: 'Biochemical oxygen demand in mg/L after incubation for 1, 2, 3, 5, 7 and 10 days (6 observations), data of Box, Hunter & Hunter, Statistics for Experimenters (1978); first-order model y = b1·(1 − exp(−b2·x))',
+    match: ['cmodel'],
+    reference: 'NIST Statistical Reference Datasets, BoxBOD (Box, Hunter & Hunter, Statistics for Experimenters, 1978) — certified values',
+    note: 'Certified b1 = 2.1380940889E+02 (standard deviation 1.2354515176E+01) from the "Certified Values" block of BoxBOD.dat; the suite also returns the certified rate constant b2 = 5.4723748542E-01 per day to 2 parts in 10⁸ and the certified residual standard deviation 1.7088072423E+01 mg/L. NIST classes this set as of higher difficulty (six scattered points; the suite reports R² = 0.88). ' + STRD_NOTE },
+  // ------------------------------------------------------------------ published measured data set with published fit (porous zirconia)
+  { id: 's24-exp-pabst-zirconia-potato-spriggs-e0', suite: 24, title: 'Porous zirconia (potato-starch series): dense-material modulus E₀ from the Spriggs fit of measured modulus against porosity', mode: 'calib',
+    inputs: { mode: 'calib', cmodel: 'exp', cdata: PABST_ZP, bayes: false }, kpi: 'p0', expected: 233.9, tol: 1e-3, kind: 'experiment',
+    measured: { value: 233.9, uncertainty: null, unit: 'GPa' },
+    source: PABST_SRC, conditions: PABST_COND + '; potato starch as pore former, porosity 0.132–0.424 (5 specimens)',
+    match: ['cmodel'],
+    reference: 'Pabst, Gregorová, Tichá & Týnová, Ceramics − Silikáty 48, 165 (2004), Tables 2 and 7',
+    note: 'Measured data: Table 2 (Z-P columns). Published fit: Table 7, Model 2 — E₀ = 233.9 GPa, B = 3.890, correlation coefficient 0.990 (the paper remarks "E0 too high" against the 210 GPa of dense zirconia). The suite gives E₀ = 233.85 GPa and B = 3.8904 (R² = 0.980, i.e. r = 0.990). ' + PABST_NOTE },
+  { id: 's24-exp-pabst-zirconia-corn-spriggs-b', suite: 24, title: 'Porous zirconia (corn-starch series): Spriggs porosity coefficient from measured modulus against porosity', mode: 'calib',
+    inputs: { mode: 'calib', cmodel: 'exp', cdata: PABST_ZC, bayes: false }, kpi: 'p1', expected: -3.118, tol: 1e-3, kind: 'experiment',
+    measured: { value: 3.118, uncertainty: null, unit: '–' },
+    source: PABST_SRC, conditions: PABST_COND + '; corn starch as pore former, porosity 0.073–0.415 (5 specimens)',
+    match: ['cmodel'],
+    reference: 'Pabst, Gregorová, Tichá & Týnová, Ceramics − Silikáty 48, 165 (2004), Tables 2 and 9',
+    note: 'Measured data: Table 2 (Z-C columns). Published fit: Table 9, Model 2 — E₀ = 216.5 GPa, B = 3.118, correlation coefficient 0.990. The suite parameter is b = −B, hence the expected value −3.118; the suite gives b = −3.1178 and E₀ = 216.49 GPa. ' + PABST_NOTE },
 ];

@@ -201,4 +201,15 @@ export default [
     reference: 'Johnson & Christy optical constants of silver (Re ε = −2 at 3.50 eV); Fröhlich condition for a small sphere in air (Bohren & Huffman)',
     note: '354.2 nm.',
   },
+  // ------------------------------------------------------------------ published experiments
+  {
+    id: 's25-exp-gold-nanorod-896nm-aspect-ratio', suite: 25, title: 'Gold nanorods with a measured longitudinal plasmon at 896 nm in water: aspect ratio against TEM (4.8 ± 1.0)', mode: 'nano',
+    inputs: { mode: 'nano', nanoType: 'lspr', metal: 'Au', lamT: 896, nMed: 1.33, dEq: 21.6 }, kpi: 'AR', expected: 4.8, tol: 0.15, kind: 'experiment',
+    measured: { value: 4.8, uncertainty: 1.0, unit: '–' },
+    source: { authors: 'Wei, M.-Z.; Deng, T.-S.; Zhang, Q.; Cheng, Z.; Li, S.', title: 'Seed-Mediated Synthesis of Gold Nanorods at Low Concentrations of CTAB', journal: 'ACS Omega 6, 9188–9195', year: 2021, doi: '10.1021/acsomega.1c00510', url: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8028147/' },
+    conditions: 'Seed-mediated gold nanorods grown in 0.01 M CTAB + 0.005 M sodium oleate with 0.144 mM AgNO₃ and 0.16 mL seed solution; aqueous suspension, extinction spectrum on a UV–vis spectrophotometer (10 mm path); length 60.4 ± 11.3 nm, diameter 12.9 ± 2.5 nm and aspect ratio 4.8 ± 1.0 from TEM images',
+    match: ['metal', 'lamT', 'nMed'],
+    reference: 'Wei, Deng, Zhang, Cheng & Li, ACS Omega 6, 9188 (2021), Table 2 (sample of Figure 4e)',
+    note: 'Inverse use of the measurement: the measured longitudinal resonance (896 nm, Table 2) is the target and the returned aspect ratio is compared with the TEM value of the same sample (4.8 ± 1.0, Table 2; the running text rounds the series to "2.1 to 4.9"). Medium: water, n = 1.33 (the paper uses ε_m = 1.78 in its own Mie–Gans calculation). The equivalent-sphere diameter 21.6 nm = (60.4 × 12.9²)^⅓ only sets the reported dimensions and does not enter the quasi-static resonance. The Gans spheroid gives 5.29 (+10 %): real rods are spherocylinders with a CTAB/oleate shell, which red-shifts the resonance, so the model needs a somewhat larger aspect ratio. Tolerance 15 %, inside the ±21 % standard deviation of the TEM aspect ratio. This is the only one of the ten samples in Tables 1 and 2 that lies inside the quasi-static range of the model (rod length below λ/(10n)); for the nine thicker rods (diameters 20.9–60.8 nm, lengths 64–130 nm) retardation red-shifts the resonance further and the Gans aspect ratio is 21–54 % above the TEM value, so they are not offered as entries.',
+  },
 ];

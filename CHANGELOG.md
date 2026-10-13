@@ -1,5 +1,12 @@
 # Changes
 
+## 1.4.0
+- Published experiments extended to 102 measured results, now covering auxetic lattices, negative effective mass, negative permittivity and permeability, negative-expansion composites, lattice moduli, vacancy concentrations, reliability data, NIST reference materials and certified data-reduction sets. Experiments the solvers do not reproduce are listed in the benchmark notes rather than omitted.
+- CATIA V5 parts: the display mesh stored in the file is read (a visualisation mesh at the saved tolerance, not the exact surfaces).
+- Autodesk Inventor and Fusion assemblies are placed using the transforms stored in the files; Inventor 2026 files are read.
+- Clearer import reports: each file states in one line what was recovered and the best next step.
+- The Internet Archive mirror is the single-file edition, served unmodified.
+
 ## 1.3.1
 - Single-file edition: the complete application as one self-contained document (Install & settings › Mirrors). It runs from any folder, drive or server with no other files, and is the copy kept on the Internet Archive, so that mirror is complete and consistent after a single save.
 - Full-resolution runs fall back to computing on the page where background workers are not allowed.

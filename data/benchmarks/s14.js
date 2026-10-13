@@ -308,4 +308,16 @@ export default [
     inputs: poIn, kpi: 'winf', expected: PO.s * PO.H / poKv, tol: 1e-6, kind: 'analytical',
     reference: 'Oedometric (uniaxial-strain) compression of a linear elastic layer (Wang, Theory of Linear Poroelasticity)',
   },
+  // ------------------------------------------------------------------ published experiments
+  {
+    id: 's14-exp-niti-reentrant-poisson', suite: 14, title: 'Laser powder-bed-fused NiTi re-entrant lattice (h/l = 1.2, t/l = 0.08, θ = −30°): measured Poisson\'s ratio', mode: 'lattice2d',
+    inputs: { mode: 'lattice2d', topology: 'reentrant', beam: 'timoshenko', h_l: 1.2, theta_c: -30, cell_l: 2.5, wall_t: 0.2, Es: 29.3e9, nu_s: 0.33, rho_s: 6450 },
+    kpi: 'nu12', expected: -1.98, tol: 0.1, kind: 'experiment',
+    measured: { value: -1.98, uncertainty: null, unit: '–' },
+    source: { authors: 'Hassanin, H.; Abena, A.; Elsayed, M. A.; Essa, K.', title: '4D Printing of NiTi Auxetic Structure with Improved Ballistic Performance', journal: 'Micromachines 11(8), 745', year: 2020, doi: '10.3390/mi11080745', url: 'https://doi.org/10.3390/mi11080745' },
+    conditions: 'Re-entrant auxetic structure of NiTi shape-memory alloy made by laser powder bed fusion, 5 by 5 unit cells on each face, cell parameters α = H/L = 1.2, β = t/L = 0.08, cell angle γ = −30°; quasi-static compression, Poisson\'s ratio from the slope of transverse against axial strain',
+    match: ['h_l', 'theta_c', 'wall_t', 'cell_l'],
+    reference: 'Hassanin, Abena, Elsayed & Essa, Micromachines 11, 745 (2020), Section 3.2 and Figure 11c',
+    note: 'Section 3.2 (text): cell parameters "α = 1.2, β = 0.08, and γ = −30°" were used for the finite-element and experimental study, and "The Poisson\'s ratio of simulation results is −2.04, whereas it is −1.98 from the experimental results". Periodic frame finite elements give ν₁₂ = −2.09 (5.6 % more negative than measured); the bending-only Gibson–Ashby value is −2.14 and the source\'s own analytical value −2.089. Mapping: γ is the wall inclination from the horizontal (θ of the suite), α = h/l, β = t/l. The source states only the ratios (Table 1 gives the ranges L = 2–3 mm and t = 0.2–0.5 mm), so l = 2.5 mm and t = 0.2 mm are ASSUMED; the Poisson\'s ratio depends on the ratios alone. Wall material constants from Table 2 of the source (E = 29.3 GPa, ν = 0.33, 6.45 g/cm³); they barely affect ν₁₂. The source compares its measurement with the in-plane ratio of the Gibson–Ashby expression cos²γ/[(α + sin γ) sin γ], which is ν₁₂ (loading across the vertical walls); the loading direction relative to the cell is not stated separately, and the specimen is a three-dimensional arrangement of the planar cell. Tolerance 10 %: no scatter is reported, the specimen is only five cells wide (free edges), the as-built strut thickness is not reported and the linear model gives the small-strain value whereas the measurement is a slope over a finite compressive strain.',
+  },
 ];

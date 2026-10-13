@@ -213,15 +213,21 @@ export function parseOleCad(bytes, product) {
     if (ud) { const refs = []; for (const off of [0, 1]) for (const m of utf16(ud, off, ud.length - off).matchAll(/(?:[A-Za-z]:\\|\\\\)[^\x00-\x1f"*<>?|:]{1,240}?\.(?:ipt|iam)/gi)) { const pth = m[0]; if (!/\\Templates\\/i.test(pth) && !refs.includes(pth)) refs.push(pth); }
       const own = refs.length ? refs[0] : ''; const others = refs.slice(1); if (own) d.meta.savedAs = own; if (others.length) { d.extra.references = others; d.meta.references = others.slice(0, 200); d.recovered.push(`${others.length} referenced file(s): ${others.slice(0, 8).map(x => x.split(/[\\/]/).pop()).join(', ')}${others.length > 8 ? ', …' : ''}`); } }
     // model segments: "M…" meta streams name each segment, the "B…" stream of the same key holds its data as one zlib stream
-    const segs = inventorSegments(d.cfb), found = [];
-    if (segs.length) { d.meta.segmentNames = segs.map(g => `${g.name} (${g.data.length} bytes${g.inflated ? ' inflated' : ''})`); d.recovered.push(`${segs.length} model segment(s) unpacked: ${segs.map(g => g.name).join(', ')}`); }
-    for (const g of segs) for (const h of findACIS(g.data)) found.push({ ...h, segment: g.name, brep: /b-?rep/i.test(g.name), bytes: g.data.subarray(h.offset) });
+    const segs = inventorSegments(d.cfb), found = [], zstd = segs.filter(g => g.zstd).length;
+    if (segs.length) { d.meta.segmentNames = segs.map(g => `${g.name} (${g.data.length} bytes${g.inflated ? ' inflated' : g.zstd ? ', Zstandard-compressed, not inflated' : ''})`); d.recovered.push(zstd ? `${segs.length} model segment(s) named: ${segs.map(g => g.name).join(', ')}` : `${segs.length} model segment(s) unpacked: ${segs.map(g => g.name).join(', ')}`); }
+    // assembly: occurrences, their files and their placements
+    if (segs.some(g => g.name === 'AmRxSegment')) { let asm = null; try { asm = inventorOccurrences(d.cfb, segs); } catch (e) { asm = null; }
+      if (asm && asm.components.length) { d.extra.assembly = asm; d.meta.components = asm.components.slice(0, 200).map(c => `${c.file.split(/[\\/]/).pop()}:${c.instance}${c.subAssembly ? ' (sub-assembly)' : ''}`); d.recovered.push(`assembly structure: ${asm.components.length} occurrence(s) of ${new Set(asm.components.map(c => c.file)).size} file(s), each with its placement transform (rotation and translation in centimetres) from the assembly's result segment`); }
+      else if (!zstd) notRecovered.push('the occurrence list of the assembly result segment is not in the layout this reader knows: component placements were not decoded'); }
+    // an assembly segment's save without any body record (no assembly-level bodies) is not offered
+    const bodiless = f => { if (!/^Am/.test(f.segment)) return false; try { return !readSAT(f.bytes).counts.body; } catch (e) { return false; } };
+    for (const g of segs) for (const h of findACIS(g.data)) { const f = { ...h, segment: g.name, brep: /b-?rep/i.test(g.name), bytes: g.data.subarray(h.offset) }; if (!bodiless(f)) found.push(f); }
     const use = found.some(f => f.brep) ? found.filter(f => f.brep) : found, aside = found.length - use.length;
     if (use.length) {
       d.extra.embedded = use.map((f, i) => ({ name: `brep-${i + 1}.sab`, mime: 'application/octet-stream', format: 'acis', bytes: f.bytes, segment: f.segment, description: `Autodesk ShapeManager binary B-rep ("${f.signature}") ${i + 1} of ${use.length} from segment ${f.segment}` }));
       d.meta.shapeManager = d.extra.embedded.map(e => e.description);
       d.recovered.push(`${use.length} ShapeManager (ACIS-derived) B-rep stream(s) located in ${[...new Set(use.map(f => f.segment))].join(', ')}${aside ? `; ${aside} further stream(s) in other segments (sketch and construction geometry) left aside` : ''}`);
-    } else notRecovered.push(segs.length ? 'no ShapeManager B-rep stream was found in the model segments' : 'the model segments could not be unpacked (no meta / data stream pairs in the layout this reader knows): no B-rep located');
+    } else if (d.extra.assembly) { /* an assembly: its geometry is in the part files it references */ } else notRecovered.push(zstd ? `the ${zstd} model segment(s) are stored with Zstandard compression (written by Inventor 2026; the saving release is in the properties above) and the Zstandard decoder was not available for this import: neither the ShapeManager B-rep nor the assembly occurrences were unpacked` : segs.length ? 'no ShapeManager B-rep stream was found in the model segments' : 'the model segments could not be unpacked (no meta / data stream pairs in the layout this reader knows): no B-rep located');
     notRecovered.push('the feature tree, sketches, parameters, browser, graphics and design-view segments are stored in Inventor\'s proprietary object serialisation and were not interpreted');
   } else {
     if (product === 'Solid Edge') { const found = []; for (const e of d.cfb.entries) if (e.type === 'stream' && e.size > 512) { const data = d.cfb.read(e); if (data) for (const f of findParasolid(data)) if (f.guise !== 'deltas') found.push({ ...f, stream: e.path.replace(/[\x00-\x1f]/g, '·') }); }
@@ -232,24 +238,89 @@ export function parseOleCad(bytes, product) {
   return { meta: d.meta, recovered: d.recovered, notRecovered, extra: d.extra, geometry: null };
 }
 
-// Inventor model segments → [{name, key, data, inflated}]. A meta stream "M<key>" carries the segment name; the data
-// stream "B<key>" is a short header followed by one zlib stream (older releases store the data raw).
+// Inventor model segments → [{name, key, data, inflated, zstd}]. A meta stream "M<key>" carries the segment name; the data
+// stream "B<key>" is a short header followed by one zlib stream (older releases store the data raw; Inventor 2026 writes a
+// Zstandard frame instead, recognised by its magic number and inflated when the optional decoder F.codecs.zstd is loaded;
+// `zstd` is true when such a frame was left packed).
 export function inventorSegments(cfb) {
   const out = [];
   for (const e of cfb.entries) {
     if (e.type !== 'stream' || !/(^|\/)RSeStorage\/B[^/]*$/.test(e.path) || e.size < 8) continue;
     const key = e.name.slice(1), me = cfb.entries.find(x => x.type === 'stream' && x.path === e.path.slice(0, e.path.length - e.name.length) + 'M' + key); let name = '';
     if (me) { const m = cfb.read(me); if (m) { const t = latin(m, 0, min(m.length, 512)).replace(/\0/g, ''), q = /[A-Za-z][A-Za-z0-9]{1,40}Segment/.exec(t); if (q) name = q[0]; } }
-    const d = cfb.read(e); if (!d) continue; let data = null;
+    const d = cfb.read(e); if (!d) continue; let data = null, zstd = false;
     for (let i = 0; i < min(64, d.length - 2) && !data; i++) if (d[i] === 0x78 && (d[i + 1] === 0x01 || d[i + 1] === 0x5E || d[i + 1] === 0x9C || d[i + 1] === 0xDA)) { try { const r = F.inflateRaw(d, i + 2); if (r.data.length > 0) data = r.data; } catch (err) { data = null; } }
-    out.push({ name: name || `segment ${key.slice(0, 8)}`, key, data: data || d, inflated: !!data });
+    if (!data) for (let i = 0; i < min(64, d.length - 4) && !zstd; i++) if (d[i] === 0x28 && d[i + 1] === 0xB5 && d[i + 2] === 0x2F && d[i + 3] === 0xFD) { zstd = true; if (F.codecs.zstd) { try { const r = F.codecs.zstd(d.subarray(i)); if (r && r.length) data = r; } catch (err) { data = null; } } } // Zstandard frame magic
+    out.push({ name: name || `segment ${key.slice(0, 8)}`, key, data: data || d, inflated: !!data, zstd: zstd && !data, codec: data ? (zstd ? 'Zstandard' : 'zlib') : '' });
   }
   return out;
 }
 
+// ---- Inventor assemblies: occurrences and their placements
+// The object records of an inflated segment, in file order → [{type, at, len}]. Each record is a zero byte, a u32 class
+// index, the payload and a u32 payload length; the stream ends with a zero byte and FF FF FF FF, so it is walked backwards.
+export function inventorRecords(data) {
+  const d = F.toBytes(data), v = dv(d), out = []; let end = -1; for (let o = d.length - 5, g = 0; o > 0 && g < 4096; o--, g++) if (d[o] === 0 && v.getUint32(o + 1, true) === 0xFFFFFFFF) { end = o; break; } if (end < 0) return out;
+  for (let p = end; p > 9;) { const len = v.getUint32(p - 4, true), s = p - 9 - len; if (s < 0 || d[s] !== 0) break; out.push({ type: v.getUint32(s + 1, true), at: s + 5, len }); p = s; }
+  return out.reverse();
+}
+// A packed 4 × 4 transform: a u32 mask, then one float64 for every cell (row-major) that the mask does not fix. Cell k
+// is fixed to 1 by bit k alone, to -1 by bits k and k + 16, to 0 by bit k + 16 alone. The rows are [R | t]: the matrix
+// acts on column vectors, lengths in centimetres. → {matrix: 12 numbers (3 × 4 row-major), end} or null when the cells
+// do not form a rigid motion.
+export function inventorTransform(data, offset, limit) {
+  const d = F.toBytes(data), end = limit === undefined ? d.length : min(limit, d.length); if (offset + 4 > end) return null; const v = dv(d), m = v.getUint32(offset, true), a = []; let p = offset + 4;
+  for (let k = 0; k < 16; k++) { const lo = (m >>> k) & 1, hi = (m >>> (k + 16)) & 1; if (lo) a.push(hi ? -1 : 1); else if (hi) a.push(0); else { if (p + 8 > end) return null; const x = v.getFloat64(p, true); if (!Number.isFinite(x) || abs(x) > 1e7) return null; a.push(x); p += 8; } }
+  if (abs(a[12]) + abs(a[13]) + abs(a[14]) > 1e-9 || abs(a[15] - 1) > 1e-9) return null;
+  for (let i = 0; i < 3; i++) { const j = (i + 1) % 3; if (abs(hypot(a[4 * i], a[4 * i + 1], a[4 * i + 2]) - 1) > 1e-6 || abs(a[4 * i] * a[4 * j] + a[4 * i + 1] * a[4 * j + 1] + a[4 * i + 2] * a[4 * j + 2]) > 1e-6) return null; }
+  return { matrix: a.slice(0, 12), end: p };
+}
+// The reference table of UFRxDoc → {files: [{path, key, count}], occurrences: [file | null]}. Every referenced file is
+// a length-prefixed UTF-16 path followed by a 70-byte record (16-byte document id at +22, number of occurrences at +58);
+// the first path is the document itself. After the table comes one property block per occurrence, in occurrence order,
+// whose property 3 repeats the document id of its file (copies of a file share that id: property 5, the file's base
+// name, then tells them apart).
+export function inventorReferences(bytes) {
+  const ud = F.toBytes(bytes), v = dv(ud), all = [];
+  for (let o = 0; o + 12 < ud.length; o++) { const n = v.getUint32(o, true); if (n < 8 || n > 400 || o + 4 + 2 * n + 70 > ud.length || ud[o + 5] !== 0 || ud[o + 4 + 2 * n - 1] !== 0) continue; const s = utf16(ud, o + 4, 2 * n); if (!/^(?:[A-Za-z]:\\|\\\\)[^\x00-\x1f"*<>?|]+\.(?:ipt|iam)$/i.test(s)) continue; const e = o + 4 + 2 * n; all.push({ path: s, key: Array.from(ud.subarray(e + 22, e + 38)).join(','), count: v.getUint32(e + 58, true), end: e + 70 }); o += 3 + 2 * n; }
+  const files = all.slice(1), occurrences = [], hits = []; if (!files.length) return { files, occurrences };
+  const prop = (o, id) => ud[o] <= 1 && ud[o + 1] === id && ud[o + 2] === 1 && !ud[o + 3] && !ud[o + 4] && !ud[o + 5] && ud[o + 6] === id, stem = pth => pth.split(/[\\/]/).pop().replace(/\.[^.]+$/, '').toLowerCase();
+  for (let o = all[all.length - 1].end; o + 23 <= ud.length; o++) if (prop(o, 3)) { const key = Array.from(ud.subarray(o + 7, o + 23)).join(','); if (files.some(f => f.key === key)) { hits.push({ o, key }); o += 22; } }
+  hits.forEach((h, k) => { let cand = files.filter(f => f.key === h.key); if (cand.length > 1) { const stop = k + 1 < hits.length ? hits[k + 1].o : ud.length; let name = null; for (let o = h.o + 23; o + 11 < stop && name === null; o++) if (prop(o, 5)) { const n = v.getUint32(o + 7, true); if (n > 0 && n < 260 && o + 11 + 2 * n <= ud.length) name = utf16(ud, o + 11, 2 * n).toLowerCase(); } cand = cand.filter(f => stem(f.path) === name); } occurrences.push(cand.length === 1 ? cand[0] : null); });
+  return { files: files.map(f => ({ path: f.path, key: f.key, count: f.count })), occurrences: occurrences.map(f => (f ? files.indexOf(f) : -1)) };
+}
+// Occurrences of an assembly → {components: [{id, name, file, instance, subAssembly, matrix: 3 × 4 row-major acting on
+// column vectors, centimetres, relative to this assembly}], files: [path]} or null when the layout is not the one this
+// reader knows (nothing is guessed). The result segment (AmRxSegment) holds, as three record classes that are recognised
+// by their layout: one placement record per occurrence (object reference, packed transform, occurrence id 12 bytes
+// before the end), one 24-byte handle per occurrence (its id) and one record per component definition listing the
+// object numbers of its handles. The component definitions follow the order of the occurrence blocks of UFRxDoc, which
+// name the files; the run lengths of both must agree, and every handle, id, placement and file must pair off exactly.
+export function inventorOccurrences(cfb, segments) {
+  const rx = (segments || inventorSegments(cfb)).find(g => g.name === 'AmRxSegment'), ue = cfb.entries.find(e => e.type === 'stream' && e.name === 'UFRxDoc'); if (!rx || !rx.inflated || !ue) return null;
+  const d = rx.data, v = dv(d), recs = inventorRecords(d), ub = cfb.read(ue), refs = ub ? inventorReferences(ub) : null; if (!recs.length || !refs || !refs.files.length) return null;
+  const byType = new Map(); recs.forEach((r, i) => { r.i = i; if (!byType.has(r.type)) byType.set(r.type, []); byType.get(r.type).push(r); });
+  const placement = r => { if (r.len < 60) return null; for (const off of [10, 14]) { const q = inventorTransform(d, r.at + off, r.at + r.len - 12); if (q) return { occ: v.getUint32(r.at + r.len - 12, true), matrix: q.matrix }; } return null; };
+  const handle = r => (r.len === 24 && v.getUint32(r.at, true) === 0x30000002 && v.getUint32(r.at + 4, true) === 1 ? { occ: v.getUint32(r.at + 16, true) } : null);
+  const definition = r => { if (r.len < 40 || v.getUint32(r.at, true) !== 0x30000002) return null; const n = v.getUint32(r.at + 4, true); if (n < 1 || n > 100000 || v.getUint32(r.at + 8, true) < n || 20 + 4 * n > r.len) return null; let p = r.at + 16; const ids = []; for (let k = 0; k < n; k++, p += 4) ids.push(v.getUint32(p, true)); const nl = v.getUint32(p, true); p += 4; if (nl > 260 || p + 2 * nl + 8 > r.at + r.len || d[p + 2 * nl] !== 1) return null; return { ids, name: utf16(d, p, 2 * nl), kind: d[p + 2 * nl + 1] }; };
+  const all = (f, skip) => { const res = []; for (const [t, list] of byType) { if (skip.includes(t)) continue; const got = list.map(f); if (got.every(Boolean)) res.push({ type: t, list: got.map((x, k) => ({ ...x, i: list[k].i })) }); } return res; };
+  const H = all(handle, [])[0], X = H && all(placement, [H.type])[0]; if (!X) return null;
+  // object numbers count the records from 2 (number 1 is the segment header); Inventor 2026 writes a second set of
+  // definitions and handles (same ids), so the first definition class that pairs off completely is taken
+  const handles = new Map(H.list.map(h => [h.i + 2, h])), where = new Map(X.list.map(x => [x.occ, x])); if (where.size !== X.list.length) return null;
+  for (const C of all(definition, [H.type, X.type])) {
+    const ids = C.list.flatMap(c => c.ids); if (ids.length !== X.list.length || new Set(ids).size !== ids.length || !ids.every(id => handles.has(id) && where.has(handles.get(id).occ)) || new Set(ids.map(id => handles.get(id).occ)).size !== ids.length || refs.occurrences.length !== ids.length || refs.occurrences.includes(-1)) continue;
+    const out = []; let q = 0, good = true;
+    for (const c of C.list) { const fi = refs.occurrences[q]; for (let k = 1; k < c.ids.length; k++) if (refs.occurrences[q + k] !== fi) good = false; q += c.ids.length; const file = refs.files[fi].path;
+      for (let k = 0; k < c.ids.length; k++) { const occ = handles.get(c.ids[k]).occ; out.push({ id: occ, name: c.name, file, instance: k + 1, subAssembly: /\.iam$/i.test(file), matrix: where.get(occ).matrix }); } }
+    if (good) return { components: out, files: refs.files.map(f => f.path) };
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- Autodesk Fusion (.f3d / .f3z)
 export function parseFusion(bytes) {
-  const b = F.toBytes(bytes), WANT = /\.(png|jpe?g|smb|smbh|smt|sab|sat|f3d)$|(^|\/)(Manifest|Properties)\.dat$/i, all = F.unzip(b, WANT), recovered = [], notRecovered = [], extra = {}, meta = { entries: all.length };
+  const b = F.toBytes(bytes), WANT = /\.(png|jpe?g|smb|smbh|smt|sab|sat|f3d)$|(^|\/)(Manifest|Properties)\.dat$|(^|\/)Manifest\.json$|(Meta|Bulk|Redirections)Stream\.dat$/i, all = F.unzip(b, WANT), recovered = [], notRecovered = [], extra = {}, meta = { entries: all.length };
   const breps = all.filter(e => /\.(smb|smbh|smt|sab|sat)$/i.test(e.name)), imgs = all.filter(e => e.data && /\.(png|jpe?g)$/i.test(e.name) && sniffImage(e.data, 0)).sort((a, c) => c.size - a.size), nested = all.filter(e => /\.f3d$/i.test(e.name));
   meta.archiveEntries = all.slice(0, 60).map(e => `${e.name} (${e.size} bytes)`); recovered.push(`archive listing: ${all.length} entries`);
   if (imgs.length) { extra.preview = preview(sniffImage(imgs[0].data, 0), `archive entry "${imgs[0].name}"`); recovered.push(describePreview(extra.preview)); }
@@ -269,9 +340,319 @@ export function parseFusion(bytes) {
   else if (breps.length || nested.length) notRecovered.push('the B-rep entries did not unpack to ShapeManager binary data with a known signature');
   if (zstd && good.length) notRecovered.push(`${zstd} further B-rep entr${zstd === 1 ? 'y is' : 'ies are'} stored with Zstandard compression (zip method 93), which this reader does not inflate: those bodies are missing`);
   else notRecovered.push('no B-rep segment entries were recognised in the archive');
+  // component occurrences and which blob holds each component's bodies, from the design stream
+  let design = null; try { design = fusionAssembly(all, { unzip: F.unzip }); } catch (e) { design = null; }
+  if (design) { const occ = design.components.length - 1, moved = design.components.filter(c => c.matrix && c.matrix.some((x, i) => abs(x - IDENT[i]) > 1e-12)).length; extra.design = design; meta.designStream = { version: design.streamVersion, root: design.root, occurrences: occ, documents: (design.documents || []).length || 1 }; meta.occurrences = design.components.slice(1, 201).map(c => `${c.path.slice(1).join(' / ')}${c.bodies.length ? ` (${c.bodies.length} blob${c.bodies.length === 1 ? '' : 's'})` : ''}${c.external ? ' (external design)' : ''}`);
+    recovered.push(`design stream: root component "${design.root}"${occ ? `, ${occ} component occurrence(s), ${moved} of them with a placement other than the identity (4 × 4 matrices in centimetres, in the root frame)` : ', no component occurrences'}; each component's bodies are tied to their B-rep blob`); }
+  else if (all.some(e => /(Meta|Bulk)Stream\.dat$/.test(e.name))) notRecovered.push('the design stream is not in the layout this reader knows: component occurrences and their placements were not decoded, so bodies stay in their own stored coordinates');
   notRecovered.push('the design history (timeline, sketches, parameters, joints) is stored in Fusion\'s proprietary serialisation and was not interpreted');
   return { meta, recovered, notRecovered, extra, geometry: null };
 }
+
+// ---- Fusion design stream: component occurrences, their placement transforms and the B-rep blob(s) that hold each
+// component's bodies.
+//
+// Layout (all little-endian), as established on Fusion archives written between 2017 and 2025 (stream versions
+// 0x08000EDB to 0x08005404):
+//   FusionAssetName[Active]/Design1/MetaStream.dat
+//     astr "Design", u32, wstr GUID, u32 stream version, u32, astr "Design", u32 × 3, u32 nTypes,
+//     nTypes × { astr class GUID, astr base-class GUID, u32 class version, astr module, u32 n, n × u64 object id },
+//     u32 nRoots, nRoots × u64, u32 n1, n1 × { u64 object id, u64 offset of the object in BulkStream.dat },
+//     u32 n2, n2 × { u64 object id, u64 offset of the object's second (base-class) chunk }, …
+//     (astr = u32 length + 8-bit characters, wstr = u32 length + UTF-16LE characters)
+//   FusionAssetName[Active]/Design1/BulkStream.dat
+//     objects in id order; each chunk starts with astr class number (decimal text, = 256 + index in the type table)
+//     and the u64 object id. A reference to another object is u8 flag (0 = null, nothing follows), u64 id,
+//     [astr class GUID of the target — streams written before about 2019 only], u8 k, k links into another design
+//     document (external reference; newer streams: u64 key, u8 0, astr class GUID; older: u32 0, wstr GUID, u8 0,
+//     wstr role key), u8 0. So a plain reference is 11 bytes in newer streams.
+//   Classes used (GUIDs are the same in every file; the class numbers are not):
+//     CE2913AA-…  occurrence ("instance"): … ref component … 4 × 4 float64 matrix, row-major, acting on column
+//                 vectors, translation in the fourth column, centimetres (omitted when the preceding flag byte is 1 =
+//                 identity) … wstr name, [wstr role key of an external design] … ref occurrence list
+//     904F885E-…  occurrence list of one component: … refs to its occurrences …, ref owning component
+//     E03784ED-… + 42054630-…  component (two chunks); its name is the last wstr of the second chunk
+//     549FBB80-…  occurrence path (absent from 2017 streams): zero bytes, u32 n, n refs to the occurrences from the root
+//                 down, …, 4 × 4 float64 matrix (same conventions) as the last 128 bytes unless it is the identity
+//     CD57BC48-…  body container: …, ref owning component
+//     74CA4562-… (history blob, ".smbh") / 40DCC3F4-… (plain blob, ".smb"): u32 n, n × { u64 key, u64 body object id },
+//                 ref body container, wstr "BREP.<guid>.smbh" = the name of the archive entry under Breps.BlobParts/
+//
+// Result: { units: 'cm', streamVersion, root, components: [{ name, component, path, depth, instance, bodies, bodyKeys,
+//           bodyObjects, matrix, placement, occurrenceMatrix?, external? }], notes }. components[0] is the root component
+//           (identity); the others are its occurrences in tree order, sub-assemblies expanded (path = names from the root).
+//   external { key, role } on an occurrence of another design document (.f3z); it has no bodies of its own here.
+//   matrix   12 numbers, 3 × 4 row-major, acting on column vectors, translation (elements 3, 7, 11) in CENTIMETRES — the
+//            unit of the ShapeManager data in the blobs. It maps the blob's coordinates to the root design's frame; it is
+//            a stored matrix, NOT composed with the parent occurrence (the file stores root-frame matrices).
+//   placement 'path-record' (matrix taken from the occurrence-path record, class 549FBB80-…) | 'occurrence-record' (no
+//            path record for this occurrence; the matrix of the occurrence record is used) | 'unknown' (matrix: null —
+//            no path record and the occurrence lies in a sub-assembly that is placed more than once).
+//            occurrenceMatrix is present when the two records disagree or the placement is unknown.
+//   bodies   names of the archive entries (final path segment, e.g. "BREP.<guid>.smbh") that hold this component's
+//            bodies: the history blob if the component has one, otherwise its plain blobs.
+//   bodyKeys { blob name: [key, …] } — for a ".smbh" blob the key is the entity id number written in each body record
+//            (the integer that follows the attribute pointer). In a ".smb" blob the body records carry no id (-1) and
+//            the keys run 0 … n-1 for n body records: they are taken to be the 0-based order of the body records. A body record whose key is not listed is not a body of the design (the history
+//            blob of a PCB board carries two unlisted sheets, for instance) and is to be left out.
+//   bodyObjects { blob name: [object id, …] } — the design-stream object of each listed body, parallel to bodyKeys.
+// Returns null when the streams are missing or their layout is not the one described above.
+
+const FUSION_CLASS = {
+  instance: 'CE2913AA-CFE0-4F04-9102-24424ED3BCFA', list: '904F885E-D859-4755-A7EF-6EBED8732FAD',
+  component: 'E03784ED-5E19-4E14-B9F2-3B07017018CD', componentBase: '42054630-20A0-40E1-B969-CFE9E742F5C9',
+  bodies: 'CD57BC48-50EC-47DC-975A-FB6DEA72F4DA', path: '549FBB80-B890-473E-A5C0-415D3D9BF4E6', blobHistory: '74CA4562-59F8-4C97-8AD1-F8297C21F9AA', blob: '40DCC3F41D-E94F-B3B1-3E95-9B6ABE572C',
+};
+class FusionLayout extends Error { }
+const need = (c, why) => { if (!c) throw new FusionLayout(why); };
+
+function fusionReader(b) {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), n = b.length;
+  const r = {
+    b, n,
+    u8: p => { need(p >= 0 && p < n, 'read past the end'); return b[p]; },
+    u16: p => { need(p >= 0 && p + 2 <= n, 'read past the end'); return dv.getUint16(p, true); },
+    u32: p => { need(p >= 0 && p + 4 <= n, 'read past the end'); return dv.getUint32(p, true); },
+    u64: p => { need(p >= 0 && p + 8 <= n, 'read past the end'); const hi = dv.getUint32(p + 4, true); need(hi < 0x200000, 'a 64-bit value is out of range'); return hi * 4294967296 + dv.getUint32(p, true); },
+    f64: p => { need(p >= 0 && p + 8 <= n, 'read past the end'); return dv.getFloat64(p, true); },
+    astr: (p, max = 4096) => { const l = r.u32(p); need(l <= max && p + 4 + l <= n, 'a text field is too long'); let s = ''; for (let i = 0; i < l; i++) s += String.fromCharCode(b[p + 4 + i]); return { s, next: p + 4 + l }; },
+    wstr: (p, max = 4096) => { const l = r.u32(p); need(l <= max && p + 4 + 2 * l <= n, 'a text field is too long'); let s = ''; for (let i = 0; i < l; i++) s += String.fromCharCode(dv.getUint16(p + 4 + 2 * i, true)); return { s, next: p + 4 + 2 * l }; },
+  };
+  return r;
+}
+const isGuid = s => /^[0-9A-Fa-f-]{36,37}$/.test(s);
+
+// MetaStream.dat → { version, types, typeOf: Map(GUID → type), first: Map(id → offset), second: Map(id → offset), order }
+function fusionMeta(bytes) {
+  const r = fusionReader(bytes); let p = 0;
+  const a0 = r.astr(p, 64); need(a0.s === 'Design', 'the stream is not a design stream'); p = a0.next + 4;
+  const g0 = r.wstr(p, 64); p = g0.next; const version = r.u32(p); p += 8;
+  const a1 = r.astr(p, 64); p = a1.next + 12; const nTypes = r.u32(p); p += 4; need(nTypes > 0 && nTypes < 65536, 'the type table is implausible');
+  const types = [], typeOf = new Map();
+  for (let i = 0; i < nTypes; i++) {
+    const g = r.astr(p, 64); p = g.next; const base = r.astr(p, 64); p = base.next; const ver = r.u32(p); p += 4; const mod = r.astr(p, 256); p = mod.next; const k = r.u32(p); p += 4;
+    need(isGuid(g.s) && (base.s === '' || isGuid(base.s)) && k < 1e7 && p + 8 * k <= r.n, 'a type table entry is malformed');
+    const ids = new Array(k); for (let j = 0; j < k; j++) { ids[j] = r.u64(p); p += 8; }
+    const t = { index: i, guid: g.s.toUpperCase(), base: base.s.toUpperCase(), version: ver, module: mod.s, ids }; types.push(t); typeOf.set(t.guid, t);
+  }
+  const nRoots = r.u32(p); p += 4; need(nRoots < 1e6, 'the root list is implausible'); p += 8 * nRoots;
+  const table = () => { const k = r.u32(p); p += 4; need(k < 5e7 && p + 16 * k <= r.n, 'an offset table is malformed'); const m = new Map(); let last = -1; for (let j = 0; j < k; j++) { const id = r.u64(p), off = r.u64(p + 8); p += 16; need(off > last, 'an offset table is not ascending'); last = off; m.set(id, off); } return m; };
+  const first = table(), second = p + 4 <= r.n ? table() : new Map();
+  return { version, types, typeOf, first, second, order: [...first].sort((x, y) => x[1] - y[1]) };
+}
+
+// fusionDesign(metaBytes, bulkBytes, opts) → result | null (see the head of the file). opts.onReject(reason) is called
+// with the reason when the layout is not recognised.
+export function fusionDesign(metaBytes, bulkBytes, opts = {}) {
+  try { return fusionDecode(F.toBytes(metaBytes), F.toBytes(bulkBytes)); } catch (e) { if (e instanceof FusionLayout || e instanceof RangeError) { if (typeof opts.onReject === 'function') opts.onReject(e.message); return null; } throw e; }
+}
+
+function fusionDecode(mb, bb) {
+  const meta = fusionMeta(mb), r = fusionReader(bb), notes = [];
+  const T = k => meta.typeOf.get(FUSION_CLASS[k]); for (const k of ['instance', 'list', 'component', 'componentBase']) need(T(k), `class ${FUSION_CLASS[k]} is not in the type table`);
+  // extent of an object: [start of its first chunk, start of the next object); second chunk start if it has one
+  const nextOff = new Map(); meta.order.forEach(([id], i) => nextOff.set(id, i + 1 < meta.order.length ? meta.order[i + 1][1] : r.n));
+  // chunk header at p for object id of class t: astr class number, u64 id → offset of the chunk's fields
+  const head = (p, id, t) => { const c = r.astr(p, 8); need(c.s === String(256 + t.index), `object ${id}: the chunk is not of the expected class`); need(r.u64(c.next) === id, `object ${id}: the chunk carries another id`); return c.next + 8; };
+  const chunk = (id, t) => { const s = meta.first.get(id); need(s !== undefined, `object ${id} is not in the offset table`); const mid = meta.second.get(id), end = nextOff.get(id); return { p: head(s, id, t), end: mid !== undefined ? mid : end }; };
+  // a reference read forwards → {id | null, next}
+  const ref = p => {
+    const f = r.u8(p); if (f === 0) return { id: null, next: p + 1 }; need(f === 1, 'a reference flag is neither 0 nor 1'); const id = r.u64(p + 1); let q = p + 9;
+    const l = q + 4 <= r.n ? r.u32(q) : 0;
+    if ((l === 36 || l === 37) && isGuid(r.astr(q, 64).s)) {                         // before about 2019: the class GUID of the target follows
+      q += 4 + l; const k = r.u8(q++); need(k <= 1, 'a reference has an implausible number of external links'); let role = '';
+      if (k) { need(r.u32(q) === 0, 'an external link is malformed'); const g = r.wstr(q + 4, 64); need(isGuid(g.s) && r.u8(g.next) === 0, 'an external link is malformed'); const w = r.wstr(g.next + 1, 1024); role = w.s; q = w.next; }
+      need(r.u8(q) === 0, 'a reference is not closed by a zero byte'); return k ? { id, ext: role, role, next: q + 1 } : { id, next: q + 1 };
+    }
+    // k further links into another design document (an external reference): each a 64-bit key, a zero byte and the class GUID
+    const k = r.u8(q++); need(k <= 4, 'a reference has an implausible number of external links'); const ext = [];
+    for (let i = 0; i < k; i++) { const lo = r.u32(q), hi = r.u32(q + 4); need(r.u8(q + 8) === 0, 'an external link is malformed'); const g = r.astr(q + 9, 64); need(isGuid(g.s), 'an external link is malformed'); ext.push(hi.toString(16).padStart(8, '0') + lo.toString(16).padStart(8, '0')); q = g.next; }
+    need(r.u8(q) === 0, 'a reference is not closed by a zero byte'); return ext.length ? { id, ext: ext.join('/'), next: q + 1 } : { id, next: q + 1 };
+  };
+  // a non-null reference that ends at `end`, read backwards → {id, start}
+  const refBack = end => {
+    need(end >= 11 && r.u16(end - 2) === 0, 'a trailing reference is missing');
+    for (const l of [36, 37]) { const s = end - 2 - l - 4 - 9; if (s >= 0 && r.u32(s + 9) === l && r.u8(s) === 1 && isGuid(r.astr(s + 9, 64).s)) return { id: r.u64(s + 1), start: s }; }
+    const s = end - 11; need(r.u8(s) === 1, 'a trailing reference is missing'); return { id: r.u64(s + 1), start: s };
+  };
+
+  // ---- occurrences
+  const inst = new Map();
+  for (const id of T('instance').ids) {
+    const c = chunk(id, T('instance')); let p = c.p;
+    const tag = r.astr(p, 64); p = tag.next; need(r.u8(p) <= 1 && r.u32(p + 1) <= 255, `occurrence ${id}: unexpected header`); p += 5;
+    const comp = ref(p); need(comp.id !== null, `occurrence ${id}: no component`); p = comp.next;
+    // counters (and, from about 2023, a list of property-group names, a self reference and a short label); the last u32
+    // is the 1-based instance number; then two GUIDs as wstr
+    let g1 = null, g2 = null; for (let k = 4; k <= 400 && p + k + 160 <= c.end && !g2; k++) { if (r.u32(p + k) !== 36) continue; const x = r.wstr(p + k, 64); if (!isGuid(x.s) || r.u32(x.next) !== 36) continue; const y = r.wstr(x.next, 64); if (isGuid(y.s)) { g1 = x; g2 = y; p += k; } }
+    need(g2, `occurrence ${id}: the two GUIDs are missing`); const index = Math.max(0, r.u32(p - 4) - 1); p = g2.next;
+    if (r.u8(p) === 0) p++;                                                   // one zero byte in streams written from about 2019
+    const comp2 = ref(p); need(comp2.id === comp.id && comp2.ext === comp.ext, `occurrence ${id}: the two component references differ`); p = comp2.next;
+    const f = r.u8(p++); need(f <= 1, `occurrence ${id}: unexpected transform flag`);
+    let matrix = IDENT.slice();
+    if (f === 0) {
+      const m = []; for (let i = 0; i < 16; i++) m.push(r.f64(p + 8 * i)); p += 128;
+      need(m.every(Number.isFinite) && Math.abs(m[12]) + Math.abs(m[13]) + Math.abs(m[14]) < 1e-9 && Math.abs(m[15] - 1) < 1e-9, `occurrence ${id}: the matrix is not affine`);
+      // rows of the 3 × 3 block must be orthonormal (a rigid motion, possibly mirrored)
+      for (let i = 0; i < 3; i++) for (let j = i; j < 3; j++) { const d = m[4 * i] * m[4 * j] + m[4 * i + 1] * m[4 * j + 1] + m[4 * i + 2] * m[4 * j + 2]; need(Math.abs(d - (i === j ? 1 : 0)) < 1e-6, `occurrence ${id}: the matrix is not a rigid motion`); }
+      matrix = m.slice(0, 12);
+    }
+    const name = r.wstr(p, 1024); p = name.next;
+    // for an occurrence of an external design: the role key under which RedirectionsStream.dat names the referenced archive
+    let role = ''; if (c.end - p >= 15) { try { const w = r.wstr(p, 512); if (w.s.length >= 36 && isGuid(w.s.slice(0, 36))) { role = w.s; p = w.next; } } catch (e) { if (!(e instanceof FusionLayout)) throw e; } }
+    let list = null; if (c.end - p >= 11) { const l = refBack(c.end); need(l.start >= p && l.start - p <= 8, `occurrence ${id}: unexpected bytes after the name`); list = l.id; }
+    inst.set(id, { id, tag: tag.s, component: comp.id, ext: comp.ext || '', role: role || comp.role || '', index, matrix, name: name.s, list });
+  }
+  // ---- occurrence lists → owning component
+  const listOwner = new Map(), listOrder = new Map();
+  for (const id of T('list').ids) {
+    const c = chunk(id, T('list')); listOwner.set(id, refBack(c.end).id);
+    try { let p = c.p + 5; const k = r.u32(p); p += 6; const ids = []; if (k === 1) { const cnt = r.u32(p); p += 4; need(cnt < 1e6, ''); for (let i = 0; i < cnt; i++) { const x = ref(p); ids.push(x.id); p = x.next; } } if (k <= 1 && ref(p).next === c.end) listOrder.set(id, ids); } catch (e) { if (!(e instanceof FusionLayout)) throw e; }
+  }
+  // ---- components: name
+  const comps = new Map();
+  for (const id of T('component').ids) {
+    const s = meta.first.get(id), mid = meta.second.get(id); need(s !== undefined, `component ${id} is not in the offset table`); head(s, id, T('component'));
+    let name = ''; const end = nextOff.get(id);
+    if (mid !== undefined) {
+      head(mid, id, T('componentBase'));
+      // tail: wstr GUID, wstr name, u8 0, reference to the root occurrence (null for every component but the root)
+      const tails = [2]; try { tails.push(end - refBack(end).start + 1); } catch (e) { if (!(e instanceof FusionLayout)) throw e; }
+      find: for (const t of tails) for (let l = 0; l <= 512; l++) { const q = end - t - 2 * l - 4; if (q - 76 < mid) break; if (r.u32(q) !== l || r.u32(q - 76) !== 36) continue; if (!isGuid(r.wstr(q - 76, 64).s)) continue; name = r.wstr(q, 1024).s; break find; }
+    }
+    comps.set(id, { id, name, blobs: [], children: [] });
+  }
+  // ---- B-rep blobs → body container → component
+  const bodyOwner = new Map(); if (T('bodies')) for (const id of T('bodies').ids) { const c = chunk(id, T('bodies')); try { bodyOwner.set(id, refBack(c.end).id); } catch (e) { if (!(e instanceof FusionLayout)) throw e; } }
+  for (const k of ['blobHistory', 'blob']) {
+    if (!T(k)) continue;
+    for (const id of T(k).ids) {
+      const c = chunk(id, T(k)); let nameAt = -1, name = '';
+      for (let l = 10; l <= 200 && nameAt < 0; l++) { const q = c.end - 2 * l - 4; if (q < c.p) break; if (r.u32(q) === l) { const w = r.wstr(q, 256).s; if (/^BREP\.[0-9A-Fa-f-]{36}\.smbh?$/.test(w)) { nameAt = q; name = w; } } }
+      if (nameAt < 0) continue;                                                     // a blob record without a stored blob
+      // the reference to the body container ends one byte before the name
+      let cont = null; for (const gap of [1, 0, 2]) { try { const c2 = refBack(nameAt - gap); if (bodyOwner.has(c2.id)) { cont = c2; break; } } catch (e) { if (!(e instanceof FusionLayout)) throw e; } }
+      if (!cont) { notes.push(`blob ${name}: its body container reference was not understood`); continue; }
+      const owner = bodyOwner.get(cont.id); if (!comps.has(owner)) { notes.push(`blob ${name}: its owning component was not found`); continue; }
+      const keys = [], objs = []; for (let n = Math.floor((cont.start - c.p - 4) / 16); n >= 0; n--) { const s = cont.start - 16 * n - 4; if (r.u32(s) !== n) continue; const kv = [], ov = []; let ok = true; for (let i = 0; i < n && ok; i++) { const hiK = r.u32(s + 4 + 16 * i + 4), hiV = r.u32(s + 4 + 16 * i + 12); if (hiK || hiV) { ok = false; break; } const key = r.u32(s + 4 + 16 * i), v = r.u32(s + 4 + 16 * i + 8); if (!meta.first.has(v)) ok = false; kv.push(key); ov.push(v); } if (ok && new Set(kv).size === n) { keys.push(...kv); objs.push(...ov); break; } }
+      comps.get(owner).blobs.push({ name, history: k === 'blobHistory', keys, objs });
+    }
+  }
+  // ---- occurrence-path records (streams from about 2018): zero bytes, u32 n, n references to the occurrences along the
+  // path from the root, …, and — unless it is the identity — a 4 × 4 matrix as the last 128 bytes
+  const rigid = m => m.every(Number.isFinite) && Math.abs(m[12]) + Math.abs(m[13]) + Math.abs(m[14]) < 1e-9 && Math.abs(m[15] - 1) < 1e-9 && [0, 1, 2].every(i => [0, 1, 2].every(j => Math.abs(m[4 * i] * m[4 * j] + m[4 * i + 1] * m[4 * j + 1] + m[4 * i + 2] * m[4 * j + 2] - (i === j ? 1 : 0)) < 1e-6));
+  const pathRec = new Map();
+  if (T('path')) for (const id of T('path').ids) {
+    try {
+      const c = chunk(id, T('path')); let p = c.p; while (p < c.end && p - c.p < 24 && r.u8(p) === 0) p++; const n = r.u32(p); if (n < 1 || n > 32) continue; p += 4;
+      const ids = []; let local = true; for (let i = 0; i < n; i++) { const x = ref(p); p = x.next; if (x.id === null || x.ext || !inst.has(x.id)) local = false; ids.push(x.id); } if (!local) continue;
+      let M = IDENT.slice(); if (c.end - p >= 128) { const m = []; for (let i = 0; i < 16; i++) m.push(r.f64(c.end - 128 + 8 * i)); if (rigid(m)) M = m.slice(0, 12); else continue; }
+      const key = ids.join('/'); if (!pathRec.has(key)) pathRec.set(key, M);
+    } catch (e) { if (!(e instanceof FusionLayout)) throw e; }
+  }
+  const sameM = (A, B) => A.every((v, i) => Math.abs(v - B[i]) < 1e-7);
+  // The path record gives the placement of an occurrence in the root frame. The occurrence record stores the same matrix
+  // unless a later feature (a joint) has moved things: then only the path records are mutually consistent, and they are
+  // used. Streams without path records (2017) have the root-frame matrix in the occurrence record.
+  const check = (ids, M, o, deep) => { const pm = pathRec.get(ids.join('/')); if (!pm && deep) { o.placement = 'unknown'; o.occurrenceMatrix = M.slice(); o.matrix = null; shared++; } else if (!pm) { o.placement = 'occurrence-record'; unconfirmed++; } else { o.placement = 'path-record'; if (!sameM(pm, M)) { o.occurrenceMatrix = M.slice(); conflicts++; } o.matrix = pm.slice(); } return o; };
+  let conflicts = 0, unconfirmed = 0, shared = 0;
+  // ---- tree
+  let root = null; const loose = [];
+  for (const i of inst.values()) {
+    need(i.ext || comps.has(i.component), `occurrence ${i.id}: its component ${i.component} is not a component object`);
+    const parent = i.list === null ? undefined : listOwner.get(i.list);
+    if (i.tag === 'rootInstance' || i.list === null) { need(root === null, 'the design has two root occurrences'); root = i; continue; }
+    if (parent === undefined || !comps.has(parent)) { loose.push(i); continue; }
+    i.parent = parent; comps.get(parent).children.push(i);
+  }
+  need(root !== null, 'the design has no root occurrence');
+  if (loose.length) notes.push(`${loose.length} occurrence(s) are not attached to a component and were left out`);
+  for (const c of comps.values()) { const ord = [...listOwner].filter(([, o]) => o === c.id).flatMap(([l]) => listOrder.get(l) || []); c.children.sort((x, y) => { const a = ord.indexOf(x.id), b = ord.indexOf(y.id); return (a < 0 ? 1e9 : a) - (b < 0 ? 1e9 : b) || x.id - y.id; }); }
+  const useCount = new Map(); for (const i of inst.values()) if (i !== root && !i.ext) useCount.set(i.component, (useCount.get(i.component) || 0) + 1);
+  const out = []; let external = 0;
+  const bodiesOf = c => { const h = c.blobs.filter(q => q.history && q.keys.length), use = h.length ? h : c.blobs.filter(q => q.keys.length); return use; };
+  const walk = (c, path, depth, matrix, instance, viaShared, guard, ids) => {
+    need(depth < 64 && !guard.has(c.id), 'the occurrence tree is cyclic');
+    const use = bodiesOf(c), bodyKeys = {}, bodyObjects = {}; for (const q of use) { bodyKeys[q.name] = q.keys.slice(); bodyObjects[q.name] = q.objs.slice(); }
+    const o = { name: path[path.length - 1], component: c.name, path, depth, instance, bodies: use.map(q => q.name), bodyKeys, bodyObjects, matrix }; out.push(ids.length ? check(ids, matrix, o, viaShared) : o);
+    guard.add(c.id);
+    for (const i of c.children) {
+      const deep = viaShared || (depth > 0 && (useCount.get(c.id) || 0) > 1);
+      // an occurrence of another design document: its bodies are in that document's archive (see fusionAssembly)
+      if (i.ext) { external++; out.push(check([...ids, i.id], i.matrix, { name: i.name || `external:${i.index + 1}`, component: '', path: [...path, i.name || `external:${i.index + 1}`], depth: depth + 1, instance: i.index + 1, bodies: [], bodyKeys: {}, bodyObjects: {}, matrix: i.matrix.slice(), external: { key: i.ext, role: i.role } }, deep)); continue; }
+      const k = comps.get(i.component), nm = i.name || `${k.name}:${i.index + 1}`;
+      walk(k, [...path, nm], depth + 1, i.matrix.slice(), i.index + 1, deep, guard, [...ids, i.id]);
+    }
+    guard.delete(c.id);
+  };
+  walk(comps.get(root.component), [comps.get(root.component).name || 'root'], 0, IDENT.slice(), 1, false, new Set(), []);
+  if (conflicts) notes.push(`${conflicts} occurrence(s) have a path record whose matrix differs from the one in the occurrence record (kept as occurrenceMatrix): the path-record matrix is used`);
+  if (unconfirmed && pathRec.size) notes.push(`${unconfirmed} occurrence(s) have no path record: the matrix of the occurrence record is used for them`);
+  const risky = conflicts ? out.filter(o => o.placement === 'occurrence-record' && o.bodies.length).length : 0;
+  if (risky) notes.push(`${risky} of them hold bodies while other occurrences of this design were moved after insertion: their placement relative to those is not established`);
+  if (shared) notes.push(`${shared} occurrence(s) lie inside a sub-assembly that is placed more than once and have no path record: the occurrence record holds one root-frame matrix only, so their placement is not established (placement: 'unknown', matrix: null)`);
+  if (external) notes.push(`${external} occurrence(s) refer to another design document (external reference)`);
+  notes.push('matrices are the stored ones: row-major, acting on column vectors, translation in centimetres, expressed in the root design frame (not relative to the parent occurrence)');
+  return { units: 'cm', streamVersion: meta.version, root: comps.get(root.component).name, components: out, notes };
+}
+
+const textOf = d => { let t = ''; for (let i = 0; i < d.length; i++) t += String.fromCharCode(d[i]); return t; };
+const jsonOf = e => { if (!e || !e.data) return null; try { return JSON.parse(textOf(e.data)); } catch (x) { return null; } };
+const FUSION_STREAM = n => new RegExp('(^|/)FusionAssetName\\[Active\\]/Design1/' + n + '\\.dat$');
+
+// One design document: entries of one .f3d archive → result of fusionDesign with every component given
+// document: docName, and the blob names checked against the archive (result.missing).
+function fusionDocument(entries, docName, opts) {
+  const m = entries.find(e => e && e.data && FUSION_STREAM('MetaStream').test(e.name)), b = entries.find(e => e && e.data && FUSION_STREAM('BulkStream').test(e.name)); if (!m || !b) return null;
+  const res = fusionDesign(m.data, b.data, opts); if (!res) return null;
+  const have = new Set(entries.filter(e => e && /(^|\/)Breps\.BlobParts\/[^/]+$/.test(e.name)).map(e => e.name.split('/').pop())), missing = new Set();
+  for (const c of res.components) { c.document = docName; for (const n of c.bodies) if (!have.has(n)) missing.add(n); }
+  res.missing = [...missing]; if (missing.size) res.notes.push(`${missing.size} blob(s) named by the design stream are not in the archive: ${[...missing].slice(0, 6).join(', ')}`);
+  // external references: role key → file name of the referenced archive
+  res.redirect = new Map(); const red = jsonOf(entries.find(e => e && /(^|\/)RedirectionsStream\.dat$/.test(e.name) && !/Active\]/.test(e.name)));
+  if (red && Array.isArray(red.references)) for (const x of red.references) { if (!x || typeof x.relativePath !== 'string') continue; for (const p of Array.isArray(x.properties) ? x.properties : []) { const v = p && p.neutronRole && p.neutronRole.value; if (typeof v === 'string' && v) res.redirect.set(v, x.relativePath); } }
+  return res;
+}
+
+// fusionAssembly(entries, opts) — entries: the unzipped archive, [{name, data: Uint8Array | null}].
+//   .f3d: the entries must include FusionAssetName[Active]/Design1/MetaStream.dat and BulkStream.dat, inflated.
+//   .f3z: the entries are Manifest.json ({"root": "<guid>.f3d"}) and one .f3d per design document; opts.unzip(bytes,
+//         regexp) → entries is then needed to open them (formats.js unzip). Occurrences of an external design are
+//         resolved through RedirectionsStream.dat of the referring document (role key → archive name) and the
+//         referenced document's own occurrences are appended with matrix = (matrix of the referring occurrence) ·
+//         (their matrix), document = the name of the nested .f3d entry.
+// Returns the result of fusionDesign (each component with document: '' or the nested .f3d name), or null.
+export function fusionAssembly(entries, opts = {}) {
+  if (!Array.isArray(entries)) return null;
+  try {
+    if (entries.some(e => e && e.data && FUSION_STREAM('MetaStream').test(e.name))) return fusionDocument(entries, '', opts);
+    const nested = entries.filter(e => e && e.data && /\.f3d$/i.test(e.name)); if (!nested.length || typeof opts.unzip !== 'function') return null;
+    const man = jsonOf(entries.find(e => e && /(^|\/)Manifest\.json$/.test(e.name))); let rootName = man && typeof man.root === 'string' ? man.root : nested.length === 1 ? nested[0].name : null; if (!rootName) return null;
+    const WANT = /(Meta|Bulk)Stream\.dat$|RedirectionsStream\.dat$|Breps\.BlobParts\//, docs = new Map();
+    const open = name => { if (docs.has(name)) return docs.get(name); const e = nested.find(x => x.name === name || x.name.split('/').pop() === name); let d = null; if (e) { let inner = null; try { inner = opts.unzip(e.data, WANT); } catch (x) { inner = null; } if (Array.isArray(inner)) d = fusionDocument(inner, e.name, opts); } docs.set(name, d); return d; };
+    const root = open(rootName); if (!root) return null;
+    const out = [], notes = root.notes.slice(), missing = new Set(root.missing); let unresolved = 0;
+    const add = (doc, M, prefix, depth0, stack) => {
+      for (const c of doc.components) {
+        if (prefix && c.depth === 0 && !c.bodies.length) continue;                    // the referenced document's root is the occurrence already listed
+        const k = { ...c, path: prefix ? [...prefix, ...c.path.slice(1)] : c.path, depth: c.depth + depth0, matrix: !c.matrix || M === undefined ? null : M ? matMul(M, c.matrix) : c.matrix.slice() };
+        if (!c.external) { out.push(k); continue; }
+        const file = doc.redirect.get(c.external.role) || (doc.redirect.size === 1 && !c.external.role ? [...doc.redirect.values()][0] : null), child = file && !stack.includes(file) ? open(file) : null;
+        k.external = { ...c.external, document: file || '' };
+        if (child && /^external:\d+$/.test(c.name)) { k.name = `${child.root}:${c.instance}`; k.component = child.root; k.path = [...k.path.slice(0, -1), k.name]; }
+        out.push(k); if (!child) { unresolved++; continue; }
+        for (const n of child.missing) missing.add(n);
+        add(child, k.matrix === null ? undefined : k.matrix, k.path, k.depth, [...stack, file]);
+      }
+    };
+    add(root, null, null, 0, [rootName]);
+    if (unresolved) notes.push(`${unresolved} occurrence(s) of an external design could not be resolved to a design document in the archive: their bodies are not placed`);
+    return { units: 'cm', streamVersion: root.streamVersion, root: root.root, rootDocument: rootName, documents: [...docs].filter(([, d]) => d).map(([n]) => n), components: out, notes, missing: [...missing] };
+  } catch (e) { if (e instanceof FusionLayout || e instanceof RangeError) return null; throw e; }
+}
+
+// the 3 × 4 matrix in millimetres (rotation unchanged, translation × 10), for bodies already scaled from cm to mm
+export const matrixToMm = m => m.map((x, i) => (i % 4 === 3 ? x * 10 : x));
 
 // ---------------------------------------------------------------- FreeCAD (.FCStd)
 const quatMat = (q, p) => { const [x, y, z, w] = q, n = hypot(x, y, z, w) || 1, a = x / n, b = y / n, c = z / n, d = w / n; return [1 - 2 * (b * b + c * c), 2 * (a * b - c * d), 2 * (a * c + b * d), p[0], 2 * (a * b + c * d), 1 - 2 * (a * a + c * c), 2 * (b * c - a * d), p[1], 2 * (a * c - b * d), 2 * (b * c + a * d), 1 - 2 * (a * a + b * b), p[2]]; };
@@ -481,24 +862,132 @@ export function findJPEG(bytes, limit = 16) {
   }
   return out;
 }
-const WHY_CATIA = 'no geometry: the part body is held in the CGMGeom / CATMFBRP containers in the binary encoding of Dassault\'s CGM kernel, for which no public description exists, and the display cache (CATSeeBodyCont / CATCGRCont) uses an equally undocumented mix of packed 2-D and 3-D primitive records — neither can be decoded to faces that could be checked, so nothing is reconstructed';
+// ---- CATIA V5: container directory and the display tessellation of the CGR cache
+// Directory of a "V5_CFV2" container → [{name, size, ext: [{off, len}]}] or null. The header gives the big-endian offset
+// of the directory at the end of the file; every stream has one record there (length 0x6A + 20 per further extent, its
+// UTF-16BE name in front of it, each extent as offset / stored / logical length / position). Streams are not compressed
+// but can be split over several extents.
+export function catiaDirectory(bytes) {
+  const b = F.toBytes(bytes); if (b.length < 64 || latin(b, 0, 7) !== 'V5_CFV2') return null; const v = dv(b), dirOff = v.getUint32(8), out = []; if (!(dirOff > 0 && dirOff + 16 <= b.length)) return null;
+  for (let o = dirOff; o + 0x6A <= b.length; o++) {
+    const L = v.getUint32(o); if (L < 0x6A || L > 0x6A + 20 * 65536 || (L - 0x6A) % 20 || o + L > b.length) continue; const t = v.getUint16(o + 0x30); if (t !== 0x12 && t !== 0x11) continue;
+    const n = v.getUint32(o + 0x52); if (n !== (L - 0x6A) / 20 + 1) continue; const size = v.getUint32(o + 14), ext = []; let okay = true, sum = 0;
+    for (let i = 0; i < n; i++) { const q = o + 0x56 + 20 * i, off = v.getUint32(q), len = v.getUint32(q + 4); if (off + len > b.length || v.getUint32(q + 8) !== len || v.getUint32(q + 12) !== sum) { okay = false; break; } sum += len; ext.push({ off, len }); }
+    if (!okay || sum !== size) continue; const e = o - 2; let st = e; while (st - 2 >= dirOff && b[st - 2] === 0 && b[st - 1] >= 0x20 && b[st - 1] < 0x7F) st -= 2;
+    let name = ''; for (let i = st; i < e; i += 2) name += String.fromCharCode(b[i + 1]); out.push({ name, size, ext }); o += L - 1;
+  }
+  return out;
+}
+export function catiaStream(bytes, entry) { const b = F.toBytes(bytes); if (entry.ext.length === 1) return b.subarray(entry.ext[0].off, entry.ext[0].off + entry.ext[0].len); const d = new Uint8Array(entry.size); let q = 0; for (const x of entry.ext) { d.set(b.subarray(x.off, x.off + x.len), q); q += x.len; } return d; }
+// One tessellated body block of the cache's "MainDataStream", starting at its marker FF FF 02 00 01. Counts are one byte,
+// or FF and a little-endian u32. Layout: A (position entries), B (entries with a normal), u32 0; a 2-bit code per entry
+// (0: x y z follow, 3: y z follow, 2: z follows, 1: the same point again); a count and that many float32 coordinates;
+// a count and that many int16 normal components; B normal nibbles; float32 chordal tolerance, 00 04 02 0A, face count;
+// per face 01, flags, the numbers of single triangles / strips / fans (flag bits 1, 2, 4), FF and the u32 index total,
+// a plane normal of three float32 (flag bit 8), the strip and fan lengths, then big-endian u16 indices into the entries.
+// Every count has to agree with the others, or the block is refused (null).
+function catiaBlock(m, o) {
+  const v = dv(m), end = m.length; let p = o + 5, bad = false;
+  const cnt = () => { if (p >= end) { bad = true; return 0; } if (m[p] !== 0xFF) return m[p++]; if (p + 5 > end) { bad = true; return 0; } const x = v.getUint32(p + 1, true); p += 5; return x; };
+  const A = cnt(), B = cnt(); if (bad || A < 3 || B > A || A > 65535 || p + 4 > end || v.getUint32(p, true) !== 0) return null; p += 4;
+  const sym = p; p += Math.ceil(A / 4); if (p >= end) return null; const code = i => (m[sym + (i >> 2)] >> ((i & 3) * 2)) & 3, n = [0, 0, 0, 0]; for (let i = 0; i < A; i++) n[code(i)]++;
+  const nf = cnt(); if (bad || nf !== 3 * n[0] + 2 * n[3] + n[2] || p + 4 * nf > end) return null;
+  const P = new Float32Array(3 * A); let x = 0, y = 0, z = 0;
+  for (let i = 0; i < A; i++) { const c = code(i); if (c === 0) { x = v.getFloat32(p, true); y = v.getFloat32(p + 4, true); z = v.getFloat32(p + 8, true); p += 12; } else if (c === 3) { y = v.getFloat32(p, true); z = v.getFloat32(p + 4, true); p += 8; } else if (c === 2) { z = v.getFloat32(p, true); p += 4; } if (!(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z))) return null; P[3 * i] = x; P[3 * i + 1] = y; P[3 * i + 2] = z; }
+  const M = cnt(); if (bad || M & 1 || p + 2 * M + Math.ceil(B / 2) + 9 > end) return null; p += 2 * M;
+  let stored = 0; for (let i = 0; i < B; i++) { const c = m[p + (i >> 1)], k = i & 1 ? c >> 4 : c & 15; if (k < 6) stored++; else if (k > 11) return null; } if (stored * 2 !== M) return null; p += Math.ceil(B / 2);
+  const sag = v.getFloat32(p, true); if (m[p + 4] !== 0 || m[p + 5] !== 4 || m[p + 6] !== 2 || m[p + 7] !== 0x0A) return null; p += 8;
+  const faces = cnt(); if (bad) return null; const tris = [];
+  for (let f = 0; f < faces; f++) {
+    if (p + 7 > end || m[p] !== 1) return null; const flags = m[p + 1]; p += 2; const nt = flags & 1 ? cnt() : 0, ns = flags & 2 ? cnt() : 0, nfan = flags & 4 ? cnt() : 0; if (bad || m[p] !== 0xFF || p + 5 > end) return null;
+    const total = v.getUint32(p + 1, true); p += 5; if (flags & 8) p += 12; const sl = [], fl = []; let sum = 3 * nt; for (let i = 0; i < ns; i++) { const c = cnt(); sl.push(c); sum += c; } for (let i = 0; i < nfan; i++) { const c = cnt(); fl.push(c); sum += c; }
+    if (bad || sum !== total || p + 2 * total > end) return null; const ix = k => v.getUint16(p + 2 * k, false); for (let k = 0; k < total; k++) if (ix(k) >= A) return null;
+    let q = 0; for (let i = 0; i < nt; i++, q += 3) tris.push(ix(q), ix(q + 1), ix(q + 2));
+    for (const len of sl) { for (let i = 0; i + 2 < len; i++) { if (i & 1) tris.push(ix(q + i + 1), ix(q + i), ix(q + i + 2)); else tris.push(ix(q + i), ix(q + i + 1), ix(q + i + 2)); } q += len; }
+    for (const len of fl) { for (let i = 1; i + 1 < len; i++) tris.push(ix(q), ix(q + i), ix(q + i + 1)); q += len; }
+    p += 2 * total;
+  }
+  return { A, P, tris, faces, sag, end: p };
+}
+// The display tessellation CATIA saved with a part → {vertices, faces, units: 'mm', blocks: [{triangles, faces, sag,
+// faceRange, area, volume, closed}], skipped, dropped} or null (no cache, or no block that passes its count checks).
+// Entries with identical coordinates are welded; the stored winding is kept. This is the visualisation mesh (float32,
+// millimetres, at the chordal tolerance it was saved with), not the exact B-rep.
+export function catiaDisplayMesh(bytes) {
+  const b = F.toBytes(bytes), dir = catiaDirectory(b); if (!dir) return null; const mains = [];
+  for (const e of dir) { if (e.size < 128) continue; if (e.name === 'MainDataStream') { mains.push(catiaStream(b, e)); continue; } const st = catiaStream(b, e), d2 = catiaDirectory(st); if (d2) for (const x of d2) if (x.name === 'MainDataStream' && x.size > 128) mains.push(catiaStream(st, x)); }
+  const vertices = [], faces = [], blocks = []; let skipped = 0, dropped = 0;
+  for (const m of mains) for (let o = 0; o + 32 < m.length; o++) {
+    if (m[o] !== 0xFF || m[o + 1] !== 0xFF || m[o + 2] !== 2 || m[o + 3] !== 0 || m[o + 4] !== 1) continue; const r = catiaBlock(m, o); if (!r || !r.tris.length) { if (!r && m[o + 5] === 0xFF) skipped++; continue; } o = r.end - 1;
+    const seen = new Map(), map = new Int32Array(r.A), bits = new Int32Array(r.P.buffer), f0 = faces.length;
+    for (let i = 0; i < r.A; i++) { const key = bits[3 * i] + ',' + bits[3 * i + 1] + ',' + bits[3 * i + 2]; let j = seen.get(key); if (j === undefined) { j = vertices.length; vertices.push([r.P[3 * i], r.P[3 * i + 1], r.P[3 * i + 2]]); seen.set(key, j); } map[i] = j; }
+    const edges = new Map(); let area = 0, vol = 0;
+    for (let t = 0; t < r.tris.length; t += 3) { const f = [map[r.tris[t]], map[r.tris[t + 1]], map[r.tris[t + 2]]]; if (f[0] === f[1] || f[1] === f[2] || f[0] === f[2]) { dropped++; continue; } faces.push(f);
+      const p0 = vertices[f[0]], p1 = vertices[f[1]], p2 = vertices[f[2]], ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2], wx = p2[0] - p0[0], wy = p2[1] - p0[1], wz = p2[2] - p0[2]; area += hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx) / 2; vol += (p0[0] * (p1[1] * p2[2] - p1[2] * p2[1]) - p0[1] * (p1[0] * p2[2] - p1[2] * p2[0]) + p0[2] * (p1[0] * p2[1] - p1[1] * p2[0])) / 6;
+      for (let k = 0; k < 3; k++) { const i = f[k], j = f[(k + 1) % 3], key = i < j ? i * 4294967296 + j : j * 4294967296 + i, e = edges.get(key) || [0, 0]; e[0]++; e[1] += i < j ? 1 : -1; edges.set(key, e); } }
+    let closed = edges.size > 0; for (const e of edges.values()) if (e[0] !== 2 || e[1] !== 0) { closed = false; break; }
+    blocks.push({ triangles: faces.length - f0, faces: r.faces, sag: r.sag, faceRange: [f0, faces.length], area, volume: closed ? vol : undefined, closed });
+  }
+  return blocks.length ? { vertices, faces, units: 'mm', blocks, skipped, dropped } : null;
+}
+const WHY_CATIA = 'no geometry: this file holds no display tessellation that passes the reader\'s checks (a CATProduct, or a part saved without its CGR display cache), and the exact part body in the CGMGeom container is in the binary encoding of Dassault\'s CGM kernel, which is not decoded';
 export function parseCatia(bytes) {
   const b = F.toBytes(bytes), recovered = [], notRecovered = [], extra = {}, meta = { container: 'CATIA V5 "V5_CFV2" container' }; if (latin(b, 0, 7) !== 'V5_CFV2') throw new Error('CATIA: missing V5_CFV2 signature');
   const names = new Map(); { const CH = 1 << 20; for (let o = 0; o < b.length; o += CH) { const t = latin(b, o, CH + 64); for (const m of t.matchAll(/CAT[A-Za-z0-9]{3,30}Cont(?:ainer)?(?![A-Za-z])|CGMGeom|CATMFBRP|CATGEO3D/g)) names.set(m[0], (names.get(m[0]) || 0) + 1); } }
+  let dir = null; try { dir = catiaDirectory(b); } catch (e) { dir = null; }
+  if (dir && dir.length) { meta.streams = dir.length; meta.streamList = dir.slice().sort((x, y) => y.size - x.size).slice(0, 60).map(e => `${e.name || '(unnamed)'} (${e.size} bytes${e.ext.length > 1 ? `, ${e.ext.length} extents` : ''})`); recovered.push(`container directory: ${dir.length} streams, stored uncompressed (${dir.filter(e => e.ext.length > 1).length} of them split over several extents)`); }
   if (names.size) { meta.containers = [...names.keys()].sort(); recovered.push(`${names.size} internal container names: ${meta.containers.slice(0, 16).join(', ')}${names.size > 16 ? ', …' : ''}`); meta.hasGeometryContainer = names.has('CGMGeom'); meta.hasDisplayCache = names.has('CATCGRCont') || names.has('CATSeeBodyCont'); }
   const imgs = findJPEG(b).sort((x, y) => y.bytes.length - x.bytes.length); if (imgs.length) { extra.preview = { mime: 'image/jpeg', bytes: imgs[0].bytes, source: `an embedded JPEG image at byte ${imgs[0].offset}`, displayable: true, width: imgs[0].width, height: imgs[0].height }; recovered.push(describePreview(extra.preview)); } else notRecovered.push('no preview image was found');
-  notRecovered.push(WHY_CATIA, 'the specification tree, sketches, parameters, PMI and material are stored as serialised CATIA feature objects and were not interpreted');
-  return { meta, recovered, notRecovered, extra, geometry: null };
+  let mesh = null; try { mesh = catiaDisplayMesh(b); } catch (e) { mesh = null; }
+  let geometry = null;
+  if (mesh) {
+    const nf = mesh.blocks.reduce((a, q) => a + q.faces, 0), sags = [...new Set(mesh.blocks.map(q => +q.sag.toPrecision(3)))].join(' / '), closed = mesh.blocks.filter(q => q.closed).length;
+    recovered.push(`display tessellation saved with the part (CGR cache): ${mesh.faces.length} triangles over ${nf} B-rep faces in ${mesh.blocks.length} block(s), ${closed} of them closed, in millimetres`);
+    meta.displayMesh = { blocks: mesh.blocks.length, brepFaces: nf, triangles: mesh.faces.length, points: mesh.vertices.length, chordalTolerance: mesh.blocks.map(q => q.sag), closedBlocks: closed };
+    extra.parts = mesh.blocks.map((q, i) => ({ name: mesh.blocks.length > 1 ? `display block ${i + 1}` : 'display tessellation', faceRange: q.faceRange, triangles: q.triangles, area: q.area, closed: q.closed, volume: q.volume, type: 'CATIA display tessellation' }));
+    const notes = [`geometry path: the display tessellation CATIA saved with the part (the CGR cache in the CATCGRCont container) — triangles, strips and fans of ${nf} B-rep faces read directly, ${mesh.faces.length} triangles on ${mesh.vertices.length} distinct points; this is the visualisation mesh stored in the file, not the exact B-rep`,
+      `coordinates are single-precision millimetres and curved faces are facetted at the chordal tolerance the cache was saved with (${sags} mm): areas and volumes carry that facetting error, and a cache saved at a coarse setting gives a coarse mesh`,
+      'the cache reflects the part as it was last displayed and saved: whether it is up to date with the feature tree is not checked'];
+    if (mesh.dropped) notes.push(`${mesh.dropped} degenerate strip or fan triangles (repeated points) were dropped`);
+    const lost = ['the exact part body (CGMGeom container, the encoding of Dassault\'s CGM kernel) is not decoded: there are no analytic surfaces, edges or face identities in the result, only triangles']; if (mesh.skipped) lost.push(`${mesh.skipped} further tessellation block(s) did not pass the count checks and were left out: the mesh may be incomplete`);
+    geometry = { kind: 'mesh', vertices: mesh.vertices, faces: mesh.faces, units: 'mm', notes, lost, meta: {} }; if (mesh.blocks.length > 1) geometry.shells = `${mesh.blocks.length} tessellation blocks kept as separate shells`; if (mesh.skipped) geometry.complete = false;
+  } else notRecovered.push(WHY_CATIA);
+  notRecovered.push('the specification tree, sketches, parameters, PMI and material are stored as serialised CATIA feature objects and were not interpreted');
+  return { meta, recovered, notRecovered, extra, geometry };
 }
-const WHY_CREO = 'no geometry: the model sections listed in the table of contents (solid tables, feature data, display data) are stored in PTC\'s proprietary compressed encoding, for which no public description exists; no neutral or tessellated stream that could be decoded and checked is present, so nothing is reconstructed';
+// ---- PTC Creo: header, table of contents and what the sections are
+// creoSections(bytes) → {objectType, release, headerLength, sections: [{name, offset, stored, size, kind, flag, body,
+// bodyLength, compressed}]} or null. The last field of the first header line is the header length, to which every
+// table-of-contents offset is relative; the table is a run of fixed-width lines (name, offset, stored size, expanded
+// size, release, kind, flag, two checksums; hexadecimal) that a NEXT_TOC_ENTRY line chains to a second table. A section
+// begins with a "#name" line; flag -1 means the body is stored as it is, a positive flag that it is a Unix-compress
+// (LZW) stream. Pro/ENGINEER files of the 1990s have no table: null.
+export function creoSections(bytes) {
+  const b = F.toBytes(bytes), head = latin(b, 0, 4096), h = /^#UGC:(\d+) (\w+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) ([0-9a-f]{8})/.exec(head); if (!h) return null;
+  const base = parseInt(h[11], 16), sections = []; let pos = head.indexOf('#UGC_TOC');
+  for (let g = 0; pos >= 0 && pos < b.length && g < 64; g++) {
+    const m = /^#UGC_TOC (\d+) (\d+) (\d+) (\d+)/.exec(latin(b, pos, 81)); if (!m) break; const n = min(+m[2], 100000), w = +m[3]; let next = -1; if (w < 20 || w > 512) break;
+    for (let i = 1; i <= n && pos + (i + 1) * w <= b.length; i++) {
+      const f = latin(b, pos + i * w, w).replace(/#+\s*$/, '').split(' '); if (f.length < 8) continue; const offset = parseInt(f[1], 16) + base, stored = parseInt(f[2], 16), size = parseInt(f[3], 16); if (f[0] === 'NEXT_TOC_ENTRY') { next = offset; continue; }
+      if (!(offset >= 0 && stored >= 0 && offset + stored <= b.length)) continue; let nl = offset; while (nl < offset + stored && b[nl] !== 10) nl++; const body = nl + 1;
+      sections.push({ name: f[0].replace(/^ND:\d+:/, ''), offset, stored, size, kind: parseInt(f[5], 16), flag: +f[6], body, bodyLength: max(0, offset + stored - body), compressed: +f[6] > 0 && b[body] === 0x1F && b[body + 1] === 0x9D });
+    }
+    pos = next;
+  }
+  return sections.length ? { objectType: h[2].toLowerCase(), release: +h[3], headerLength: base, sections } : null;
+}
+const WHY_CREO = 'no geometry: the file holds no tessellated or neutral data (its only display data are the JPEG view thumbnails and one display table in an undecoded packing), and the surface table of the solid (section VisibGeom: planes, cylinders, cones, tori with their local systems and radii), although present, is in PTC\'s tagged object encoding — field names spelled out once, later records positional, real numbers byte-coded — whose record structure is not decoded, so no face can be rebuilt and checked';
 export function parseCreo(bytes) {
   const b = F.toBytes(bytes), head = latin(b, 0, min(b.length, 65536)), recovered = [], notRecovered = [], extra = {}, meta = {}; if (!head.startsWith('#UGC:')) throw new Error('Creo: missing #UGC header');
   const h1 = /^#UGC:(\d+)\s+(\w+)\s+(\d+)\s+(\d+)/.exec(head); if (h1) { meta.headerVersion = +h1[1]; meta.objectType = h1[2].toLowerCase(); meta.releaseCode = +h1[3]; meta.minimumReleaseCode = +h1[4]; }
   for (const [k, key] of [['MACH', 'platform'], ['CMNM', 'originalName'], ['HOST', 'host']]) { const m = new RegExp('#- ' + k + ' +([^\\\\\\r\\n]*?)\\s*\\\\').exec(head); if (m && m[1].trim()) meta[key] = m[1].trim().replace(/^[0-9a-f]{3}/, ''); }
   const rel = /#((?:Creo|Pro\/ENGINEER|Wildfire)[^\r\n]{0,90})/.exec(head); if (rel) meta.release = rel[1].replace(/\s+/g, ' ').trim();
   recovered.push(`${meta.release || 'PTC model file'}${meta.objectType ? `, ${meta.objectType}` : ''}${meta.originalName ? `, saved as ${meta.originalName}` : ''}${meta.platform ? ` on ${meta.platform.replace(/^_/, '')}` : ''}`);
-  const toc = []; for (const m of head.matchAll(/(?:^|\n)((?:ND:\d+:)?[A-Za-z][\w]{2,60})(?::\d+)? ([0-9a-f]{1,8}) ([0-9a-f]{1,8}) ([0-9a-f]{1,8}) [0-9a-f]+ [0-9a-f]+ [0-9a-f]+ [0-9a-f]+ [0-9a-f]+#/g)) toc.push({ name: m[1].replace(/^ND:\d+:/, ''), offset: parseInt(m[2], 16), stored: parseInt(m[3], 16), size: parseInt(m[4], 16) });
-  if (toc.length) { meta.sections = toc.slice(0, 120).map(t => `${t.name} (${t.stored} bytes stored, ${t.size} expanded)`); recovered.push(`table of contents: ${toc.length} model sections (${toc.slice(0, 8).map(t => t.name).join(', ')}${toc.length > 8 ? ', …' : ''})`); }
+  let toc = null; try { toc = creoSections(b); } catch (e) { toc = null; }
+  if (toc) { const S = toc.sections, packed = S.filter(x => x.compressed), plain = S.filter(x => x.flag < 0), bytesPlain = plain.reduce((a, x) => a + x.stored, 0), total = S.reduce((a, x) => a + x.stored, 0), vg = S.find(x => x.name === 'VisibGeom');
+    meta.sections = S.slice(0, 120).map(t => `${t.name} (${t.stored} bytes stored, ${t.size} expanded${t.compressed ? ', LZW' : ''})`); meta.sectionCount = S.length; meta.hasSurfaceTable = !!vg;
+    recovered.push(`table of contents: ${S.length} model sections (${S.slice(0, 8).map(t => t.name).join(', ')}${S.length > 8 ? ', …' : ''}); ${plain.length} are stored as they are (${total ? (100 * bytesPlain / total).toFixed(0) : 0} % of the section bytes) and ${packed.length} as Unix-compress (LZW) streams${vg ? `; the surface table VisibGeom is ${vg.stored} bytes${vg.compressed ? '' : ', uncompressed'}` : ''}`); }
+  else { const n = (head.match(/(?:^|\n)#[A-Z][A-Za-z_]{3,40}\r?\n/g) || []).length; if (n) recovered.push(`${n} section heading(s) in the first 64 kB (a file without a table of contents, as written by Pro/ENGINEER releases of the 1990s)`); }
   const imgs = findJPEG(b).sort((x, y) => y.width * y.height - x.width * x.height); if (imgs.length) { extra.preview = { mime: 'image/jpeg', bytes: imgs[0].bytes, source: `an embedded JPEG image at byte ${imgs[0].offset} (${imgs.length} view thumbnail(s) in the file)`, displayable: true, width: imgs[0].width, height: imgs[0].height }; recovered.push(describePreview(extra.preview)); } else notRecovered.push('no preview image was found');
   notRecovered.push(WHY_CREO, 'features, sketches, parameters, relations and annotations were not interpreted');
   return { meta, recovered, notRecovered, extra, geometry: null };

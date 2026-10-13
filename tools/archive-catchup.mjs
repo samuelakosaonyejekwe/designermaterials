@@ -8,9 +8,10 @@ import { execSync } from 'node:child_process';
 
 const budget = (Number(process.argv[2]) || 20) * 60e3, t0 = Date.now();
 const remote = execSync('git remote get-url origin').toString().trim().replace(/\.git$/, ''), [, user, repo] = remote.match(/github\.com[:/]([^/]+)\/(.+)$/);
-const pages = `https://${user}.github.io/${repo}/`, A = JSON.parse(fs.readFileSync('assets.json', 'utf8')), files = ['standalone.html', '', ...A.files.filter(f => f !== 'index.html'), 'assets.json', 'sw.js'];
-// standalone.html comes first: it is the whole application in one document, so the archive copy is complete and
-// consistent as soon as that single file has been saved.
+const pages = `https://${user}.github.io/${repo}/`, A = JSON.parse(fs.readFileSync('assets.json', 'utf8')), files = ['standalone.html', ''];
+// Only standalone.html (the whole application in one document) and the entry page are archived: one save makes the
+// archive copy complete and consistent, and stays well inside the archive's rate limits. The copy is served unmodified
+// from https://web.archive.org/web/<year>id_/<address>standalone.html
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const b32 = buf => { const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = 0, val = 0, out = ''; for (const b of buf) { val = (val << 8) | b; bits += 8; while (bits >= 5) { out += abc[(val >>> (bits - 5)) & 31]; bits -= 5; } } if (bits) out += abc[(val << (5 - bits)) & 31]; return out; };
 const digest = f => fs.existsSync(f || 'index.html') ? b32(crypto.createHash('sha1').update(fs.readFileSync(f || 'index.html')).digest()) : 'missing';

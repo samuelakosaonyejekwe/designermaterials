@@ -19,6 +19,15 @@ const aux = { E_p: 2e9, nu_p: -0.5, rho_p: 400, ph: 0.01 }, Daux = Dplate(aux.E_
 const kS = 1e5, mLight = 0.01, mHeavy = 0.03;
 const rM = Math.sqrt(mLight / mHeavy), cosMid = 3 - 2 * (rM + 1 / rM);      // cos(qa) of the diatomic chain at ω² = 2k/√(m₁m₂)
 const kappaMid = Math.acosh(Math.abs(cosMid));
+// diatomic granular crystal of Boechler et al. (arXiv:0911.2817): aluminium 6061-T6 and stainless steel 316 spheres of radius 9.525 mm under
+// a static precompression of 20 N. Linearised Hertz contact stiffness K₂ = (3/2)·A^(2/3)·F₀^(1/3) from the stated standard material specifications.
+const GC = { Ea: 73.5e9, nua: 0.33, ma: 9.75e-3, Eb: 193e9, nub: 0.3, mb: 28.84e-3, R: 9.525e-3, F0: 20 };
+const gcA = 1 / (0.75 * (1 - GC.nua ** 2) / GC.Ea + 0.75 * (1 - GC.nub ** 2) / GC.Eb) / Math.sqrt(2 / GC.R);   // Hertz coefficient, N/m^1.5
+const gcK = 1.5 * gcA ** (2 / 3) * Math.cbrt(GC.F0);                                                             // 12.63 N/µm, as in Table I of the source
+const gcIn = { mode: 'modal', n_cells: 20, m1: GC.ma, m2: GC.mb, k_s: gcK, eta: 0.01, gap_lo: 0, gap_hi: 0 };
+const gcSource = { authors: 'Boechler, N.; Theocharis, G.; Job, S.; Kevrekidis, P. G.; Porter, M. A.; Daraio, C.', title: 'Discrete Breathers in One-Dimensional Diatomic Granular Crystals', journal: 'arXiv:0911.2817v1 (journal version: Phys. Rev. Lett. 104, 244302)', year: 2009, doi: '10.1103/PhysRevLett.104.244302', url: 'https://arxiv.org/abs/0911.2817' };
+const gcCond = 'Chain of 81 alternating aluminium 6061-T6 (9.75 g) and stainless steel 316 (28.84 g) spheres of radius 9.525 mm held by polycarbonate guides, static precompression 20 N by a lever-mass system; low-amplitude broadband noise (2–18 kHz) from a piezoelectric actuator, force sensor embedded in the 14th particle; cut-off frequencies taken at half of the low-frequency level of the transfer function';
+const gcNote = (which, got, dev) => `Table I of the source (row "exp."): ${which}. The contact stiffness is not a measured input: it is the linearised Hertz stiffness K₂ = (3/2)A^(2/3)F₀^(1/3) = 12.63 N/µm evaluated from the standard material specifications quoted in the source (E = 73.5 and 193 GPa, ν = 0.33 and 0.30), exactly as the authors do for their own prediction; the masses are as stated. Solver: ${got} (${dev}). The source reports that "all of the cutoff frequencies show a systematic upshift of about 9% compared to the predictions from standard specifications" and attributes it to the uncertainty of the material constants, deviations from the Hertz exponent, surface roughness and dissipation; the 10 % tolerance is that documented limit of the Hertz stiffness estimate, not measurement scatter (the standard deviation of the three frequencies corresponds to under 1 % in stiffness). Twenty cells are solved instead of the 40 of the experiment to keep the run short; the band edges are those of the infinite chain and do not depend on the chain length.`;
 
 // ---- aperture ----
 const fGHz10 = 1e10, lam = C0 / fGHz10, pitch = 0.015, dLam = pitch / lam;
@@ -282,5 +291,27 @@ export default [
     inputs: { mode: 'reliability', n_ser: 1, m_par: 1, beta_w: 2, eta_h: 1e4, beta_c: 1, eta_c: 1e9, t_miss: 1000 },
     kpi: 'mttf', expected: 1e4 * gamma15, tol: 2e-3, kind: 'analytical',
     reference: 'Mean of the Weibull distribution, MTTF = η·Γ(1 + 1/β), with Γ(3/2) = √π/2',
+  },
+  // ---------------- published experiments ----------------
+  {
+    id: 's19-exp-granular-chain-acoustic-cutoff', suite: 19, title: 'Aluminium–steel sphere chain under 20 N precompression: measured lower band-gap edge', mode: 'modal',
+    inputs: gcIn, kpi: 'gap_lo', expected: 5110, tol: 0.1, kind: 'experiment',
+    measured: { value: 5.11, uncertainty: null, unit: 'kHz' }, source: gcSource, conditions: gcCond, match: ['m1', 'm2', 'k_s'],
+    reference: 'Boechler, Theocharis, Job, Kevrekidis, Porter & Daraio, arXiv:0911.2817 (2009), Phys. Rev. Lett. 104, 244302 — Table I',
+    note: gcNote('upper cut-off of the acoustic band f₁ = 5.11 kHz (authors\' prediction 4.71 kHz, +8.5 %)', '4.71 kHz', '−7.8 %'),
+  },
+  {
+    id: 's19-exp-granular-chain-optical-lower-cutoff', suite: 19, title: 'Aluminium–steel sphere chain under 20 N precompression: measured upper band-gap edge', mode: 'modal',
+    inputs: gcIn, kpi: 'gap_hi', expected: 8830, tol: 0.1, kind: 'experiment',
+    measured: { value: 8.83, uncertainty: null, unit: 'kHz' }, source: gcSource, conditions: gcCond, match: ['m1', 'm2', 'k_s'],
+    reference: 'Boechler, Theocharis, Job, Kevrekidis, Porter & Daraio, arXiv:0911.2817 (2009), Phys. Rev. Lett. 104, 244302 — Table I',
+    note: gcNote('lower cut-off of the optical band f₂ = 8.83 kHz (authors\' prediction 8.10 kHz, +9.0 %)', '8.10 kHz', '−8.3 %'),
+  },
+  {
+    id: 's19-exp-granular-chain-optical-upper-cutoff', suite: 19, title: 'Aluminium–steel sphere chain under 20 N precompression: measured top of the optical band', mode: 'modal',
+    inputs: gcIn, kpi: 'f_max', expected: 10220, tol: 0.1, kind: 'experiment',
+    measured: { value: 10.22, uncertainty: null, unit: 'kHz' }, source: gcSource, conditions: gcCond, match: ['m1', 'm2', 'k_s'],
+    reference: 'Boechler, Theocharis, Job, Kevrekidis, Porter & Daraio, arXiv:0911.2817 (2009), Phys. Rev. Lett. 104, 244302 — Table I',
+    note: gcNote('upper cut-off of the optical band f₃ = 10.22 kHz (authors\' prediction 9.37 kHz, +9.1 %)', '9.37 kHz (highest natural frequency of the 40-mass chain, 0.05 % below the infinite-chain cut-off)', '−8.4 %'),
   },
 ];

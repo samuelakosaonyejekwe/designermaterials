@@ -1,6 +1,7 @@
 // Reference benchmarks for Suite 23 — Experimental characterisation and metrology.
 // Every data table below is generated in this file from a closed-form forward model with known parameters
 // (no noise, no call into the suite); the reduction must return the generating parameters.
+// Exception: the entries of kind 'experiment' at the end use published measured data, transcribed in the constants placed just before the list.
 
 const PI = Math.PI, D2R = PI / 180, LN2 = Math.LN2;
 const K_B = 1.380649e-23, N_A = 6.02214076e23, Q_E = 1.602176634e-19, MU0 = 4e-7 * PI;
@@ -99,6 +100,48 @@ const GUM_FPP = 'quantity,value,u_standard\nV_mV,1,0.01\nI_mA,1,0.02\nt_nm,100,2
 const GUM_STOKES = `quantity,value,u_standard\nT_K,298.15,0\neta_mPas,0.89,0\nD_m2_s,${D_SE},0`;
 const REP = csv(['value'], [[9.8], [10.0], [10.2], [10.1], [9.9]]);
 
+// ---------- published measured data used by the experiment entries at the end of the list ----------
+// NIST SRM 676a (alumina powder), certificate of 04 November 2015: Table 2 peak positions (Cu Kα₁, λ = 1.5405929 Å; computed by NIST from the
+// certified cell) with the measured relative intensities of Table 3, for the eight reflections that have both.
+const SRM676A = [[25.574, 57.06], [35.149, 88.41], [37.773, 37.75], [43.351, 100.0], [52.548, 47.33], [57.497, 95.78], [66.513, 37.74], [68.203, 57.49]];
+// NIST SRM 640f (silicon powder), certificate of 26 February 2019: Table 1 peak positions (Cu Kα₁, λ = 1.5405929 Å). No intensities are tabulated.
+const SRM640F = [28.441, 47.301, 56.120, 69.127, 76.373, 88.026, 94.947, 106.702, 114.085, 127.535, 136.882];
+// The suite reduces a full pattern, not a peak list: each tabulated position is rendered as a Gaussian line of 0.2° FWHM on a 0.04° grid without
+// background or noise (line shape, width and — for silicon — equal line heights are ASSUMPTIONS of this file, not data of the certificates).
+const sticks = (pk, lo, hi) => csv(['two_theta_deg', 'intensity'], lin(lo, hi, Math.round((hi - lo) / 0.04) + 1).map(tt => [tt.toFixed(2), pk.reduce((y, [p, I]) => y + 100 * I * Math.exp(-4 * LN2 * ((tt - p) / 0.2) ** 2), 0).toFixed(3)]));
+const XRD_676A = sticks(SRM676A, 22, 71), XRD_640F = sticks(SRM640F.map(p => [p, 100]), 25, 140);
+// N₂ isotherm of MCM-41 (mesoporous silica) at 77 K from the round-robin data set of Osterrieth et al., Adv. Mater. 34, 2201502 (2022): file betsi/data/MCM-41.csv
+// of https://github.com/fairen-group/betsi-gui (reference 39 of the paper), all 38 points, transcribed unchanged (relative pressure, cm³(STP)/g).
+const BET_MCM41 = csv(['p_rel', 'v_ads_cm3_g'], [
+  [9.79E-03, 141.8502983], [1.30E-02, 147.3], [0.016992215, 153.9], [0.021993683, 161.7], [0.02998674, 172.9], [0.039658038, 183.7882938],
+  [0.056022606, 197.1], [0.071295439, 206.8902405], [0.104927504, 225.1116935], [0.129699104, 236.6158331], [0.159960572, 249.4753063], [0.191745691, 262.3267321],
+  [0.222604245, 274.802244], [0.252936316, 287.7227679], [0.284027412, 303.5133822], [0.305135298, 320.3], [0.316012885, 333.9432213], [0.333871196, 392.7],
+  [0.343960535, 420.7730051], [0.372991369, 458.9], [0.42755174, 493.6786212], [0.447576408, 495.090764], [0.476895088, 496.9751534], [0.499735922, 498.29126],
+  [0.529857594, 499.8883749], [0.560582034, 501.3842062], [0.591212993, 502.7760393], [0.621878896, 504.132203], [0.652784998, 505.4119977], [0.683268469, 506.6427636],
+  [0.713947513, 507.8582389], [0.744563968, 509.0861455], [0.775127231, 510.350724], [0.806787691, 511.6682351], [0.836549791, 512.9731992], [0.867018855, 514.4407391],
+  [0.897225551, 516.3071265], [0.937868963, 520.8782567]]);
+// N₂ isotherm of zeolite 13X at 77 K from the round-robin data set of Osterrieth et al., Adv. Mater. 34, 2201502 (2022): file betsi/data/Zeolite-13X.csv
+// of https://github.com/fairen-group/betsi-gui (reference 39 of the paper), all 59 points, transcribed unchanged (relative pressure, cm³(STP)/g).
+const BET_13X = csv(['p_rel', 'v_ads_cm3_g'], [
+  [0.00002, 2.026477494], [0.0000579, 2.541243526], [0.0000907, 3.547198566], [0.0000997, 5.866784332], [0.000120002, 15.07999999], [0.000135878, 25.76287669],
+  [0.000149981, 40.33], [0.000153726, 45.67806745], [0.000162203, 64.12239133], [0.000169951, 75.52], [0.00017989, 84.02434859], [0.000206222, 88.10310565],
+  [0.000247599, 90.41453575], [0.000279922, 98.40000001], [0.00030673, 110.3127874], [0.000320061, 118.2], [0.000331941, 130.1702139], [0.000340176, 149.9101801],
+  [0.000410145, 162.7], [0.000537827, 169.2831879], [0.000900104, 175.9], [0.001686888, 181.7420809], [0.00209589, 183.1710764], [0.002623178, 184.5665064],
+  [0.003299735, 185.9154892], [0.004185916, 187.207991], [0.005255232, 188.3560885], [0.006657108, 189.4913756], [0.008491008, 190.6152549], [0.01080895, 191.6753808],
+  [0.013672316, 192.6618808], [0.017379148, 193.6303044], [0.022120016, 194.5457703], [0.027972214, 195.4006837], [0.035502441, 196.2615519], [0.04518963, 197.0870784],
+  [0.057104756, 197.8552004], [0.073503814, 198.6615603], [0.092897268, 199.3819823], [0.117365134, 200.0680882], [0.148033492, 200.7177207], [0.186991608, 201.3422758],
+  [0.236269718, 201.9196185], [0.298618506, 202.4531402], [0.376375557, 202.9157132], [0.475676689, 203.3086953], [0.5396658, 203.5210373], [0.603274987, 203.6931052],
+  [0.644041058, 203.8083676], [0.684269297, 203.9188626], [0.724374314, 204.0281004], [0.764422491, 204.1528227], [0.790647003, 204.2464609], [0.815998166, 204.363534],
+  [0.841457924, 204.4757084], [0.866631605, 204.6170522], [0.915618717, 205.0325277], [0.942539338, 205.5096857], [0.967868769, 206.3637334]]);
+// Michelson's 100 determinations of the speed of light in air (1879), in 10³ km/s, as distributed in the NIST Statistical Reference Datasets
+// (file Michelso.dat; NIST cites Dorsey, Trans. Am. Philos. Soc. 34, 1–110 (1944), Table 22). Transcribed unchanged, in file order.
+const MICHELSON = csv(['speed_1000_km_s'], [
+  299.85, 299.74, 299.90, 300.07, 299.93, 299.85, 299.95, 299.98, 299.98, 299.88, 300.00, 299.98, 299.93, 299.65, 299.76, 299.81, 300.00, 300.00, 299.96, 299.96,
+  299.96, 299.94, 299.96, 299.94, 299.88, 299.80, 299.85, 299.88, 299.90, 299.84, 299.83, 299.79, 299.81, 299.88, 299.88, 299.83, 299.80, 299.79, 299.76, 299.80,
+  299.88, 299.88, 299.88, 299.86, 299.72, 299.72, 299.62, 299.86, 299.97, 299.95, 299.88, 299.91, 299.85, 299.87, 299.84, 299.84, 299.85, 299.84, 299.84, 299.84,
+  299.89, 299.81, 299.81, 299.82, 299.80, 299.77, 299.76, 299.74, 299.75, 299.76, 299.91, 299.92, 299.89, 299.86, 299.88, 299.72, 299.84, 299.85, 299.85, 299.78,
+  299.89, 299.84, 299.78, 299.81, 299.76, 299.81, 299.79, 299.81, 299.82, 299.85, 299.87, 299.87, 299.81, 299.74, 299.81, 299.94, 299.95, 299.80, 299.81, 299.87].map(v => [v.toFixed(2)]));
+
 export default [
   // ---- XRD ----
   { id: 's23-xrd-bragg-cu111', suite: 23, title: 'XRD: Bragg d-spacing of Cu (111) from a simulated pattern', mode: 'xrd', inputs: { mode: 'xrd', xrd_table: XRD_SIZE }, kpi: 'd_main', expected: A_CU / Math.sqrt(3), tol: 0.001, kind: 'analytical', reference: "Bragg's law, d = a/√(h²+k²+l²) for a cubic cell; Cullity, Elements of X-Ray Diffraction", note: 'Gaussian peaks placed at the Bragg angles of fcc Cu (a = 3.6149 Å, Cu Kα₁).' },
@@ -179,4 +222,61 @@ export default [
   { id: 's23-repeat-en', suite: 23, title: 'Calibration check: E_n number', mode: 'repeat', inputs: { mode: 'repeat', rep_table: REP, rep_ref: 9.9, rep_Uref: 0.1, rep_uB: 0 }, kpi: 'En', expected: 0.1 / Math.sqrt(4 * 0.005 + 0.01), tol: 1e-6, kind: 'analytical', reference: 'E_n = (x − X_ref)/√(U_lab² + U_ref²) with k = 2 expanded uncertainties (ISO 13528 proficiency-testing statistics)' },
   { id: 's23-repeat-expanded', suite: 23, title: 'Repeatability: expanded uncertainty U = 2·√(s²/n + u_B²)', mode: 'repeat', inputs: { mode: 'repeat', rep_table: REP, rep_uB: 0.05 }, kpi: 'U', expected: 2 * Math.sqrt(0.005 + 0.0025), tol: 1e-6, kind: 'analytical', reference: 'JCGM 100 (GUM), combination of type-A and type-B standard uncertainties, coverage factor 2' },
   { id: 's23-repeat-grubbs', suite: 23, title: 'Grubbs statistic G = max|x − x̄|/s of the same set', mode: 'repeat', inputs: { mode: 'repeat', rep_table: REP }, kpi: 'G', expected: 0.2 / Math.sqrt(0.025), tol: 1e-6, kind: 'analytical', reference: 'Grubbs test for a single outlier' },
+  // ------------------------------------------------------------------ published experiments
+  { id: 's23-exp-nist-srm676a-alumina-lattice-a', suite: 23, title: 'NIST SRM 676a alumina powder: certified lattice parameter a from the certificate\'s peak positions', mode: 'xrd',
+    inputs: { mode: 'xrd', xrd_table: XRD_676A, xrd_lambda: 1.5405929 }, kpi: 'a', expected: 4.759355, tol: 1e-4, kind: 'experiment',
+    measured: { value: 0.4759355, uncertainty: 0.000008, unit: 'nm' },
+    source: { authors: 'National Institute of Standards and Technology', title: 'Certificate of Analysis, Standard Reference Material 676a: Alumina Powder (Quantitative Analysis Powder Diffraction Standard)', journal: 'NIST Certificate of Analysis', year: 2015, doi: null, url: 'https://tsapps.nist.gov/srmext/certificates/676a.pdf' },
+    conditions: 'α-Al₂O₃ (corundum) powder; lattice parameters certified at 22.5 °C from divergent-beam Cu Kα diffraction with fundamental-parameters Rietveld refinement; expanded uncertainty k = 2',
+    match: ['xrd_table', 'xrd_lambda'],
+    reference: 'NIST Certificate of Analysis SRM 676a, Alumina Powder, revision of 04 November 2015, Tables 1–3',
+    note: 'Certified a = 0.475 935 5 ± 0.000 008 0 nm (Table 1). Input: the first eight peak positions of Table 2 (2θ = 25.574° to 68.203°, Cu Kα₁, λ = 0.154 059 29 nm) with the measured relative intensities of Table 3. Two limits of this comparison must be read with it. (1) The Table 2 positions are information values that NIST computed from the certified cell; the diffraction data themselves are not published, so the entry tests the phase identification, indexing and least-squares cell refinement of the suite against the certified cell, not its treatment of instrumental aberrations. (2) The suite needs a full pattern, so each position is rendered in this file as a Gaussian line of 0.2° FWHM on a 0.04° grid without background (assumed profile). Corundum is ranked first among the library phases (score 0.84) and the refinement returns a = 4.75937 Å (+2 ppm). Tolerance 0.01 %: the positions are tabulated to 0.001°, i.e. about 2 × 10⁻⁵ in d at the lowest angle.' },
+  { id: 's23-exp-nist-srm676a-alumina-lattice-c', suite: 23, title: 'NIST SRM 676a alumina powder: certified lattice parameter c from the certificate\'s peak positions', mode: 'xrd',
+    inputs: { mode: 'xrd', xrd_table: XRD_676A, xrd_lambda: 1.5405929 }, kpi: 'c', expected: 12.99231, tol: 1e-4, kind: 'experiment',
+    measured: { value: 1.299231, uncertainty: 0.000015, unit: 'nm' },
+    source: { authors: 'National Institute of Standards and Technology', title: 'Certificate of Analysis, Standard Reference Material 676a: Alumina Powder (Quantitative Analysis Powder Diffraction Standard)', journal: 'NIST Certificate of Analysis', year: 2015, doi: null, url: 'https://tsapps.nist.gov/srmext/certificates/676a.pdf' },
+    conditions: 'α-Al₂O₃ (corundum) powder; lattice parameters certified at 22.5 °C from divergent-beam Cu Kα diffraction with fundamental-parameters Rietveld refinement; expanded uncertainty k = 2',
+    match: ['xrd_table', 'xrd_lambda'],
+    reference: 'NIST Certificate of Analysis SRM 676a, Alumina Powder, revision of 04 November 2015, Tables 1–3',
+    note: 'Certified c = 1.299 231 ± 0.000 015 nm (Table 1). Same pattern and the same two limits as the entry for a: positions computed by NIST from the certified cell (Table 2), rendered here as assumed Gaussian lines with the measured relative intensities of Table 3. The two-parameter hexagonal refinement returns c = 12.9921 Å (−16 ppm). Tolerance 0.01 % for the 0.001° rounding of the tabulated positions.' },
+  { id: 's23-exp-nist-srm640f-silicon-lattice-a', suite: 23, title: 'NIST SRM 640f silicon powder: certified lattice parameter from the certificate\'s peak positions', mode: 'xrd',
+    inputs: { mode: 'xrd', xrd_table: XRD_640F, xrd_lambda: 1.5405929 }, kpi: 'a', expected: 5.431144, tol: 1e-4, kind: 'experiment',
+    measured: { value: 0.5431144, uncertainty: 0.000008, unit: 'nm' },
+    source: { authors: 'National Institute of Standards and Technology', title: 'Certificate, Standard Reference Material 640f: Line Position and Line Shape Standard for Powder Diffraction (Silicon Powder)', journal: 'NIST Certificate', year: 2019, doi: null, url: 'https://tsapps.nist.gov/srmext/certificates/archives/640f.pdf' },
+    conditions: 'Silicon powder (median particle size 4.1 µm, annealed); lattice parameter certified at 22.5 °C from Bragg–Brentano Cu Kα diffraction (Johansson monochromator) with fundamental-parameters Pawley analysis; expanded uncertainty k = 2',
+    match: ['xrd_table', 'xrd_lambda'],
+    reference: 'NIST Certificate SRM 640f, Silicon Powder, issued 26 February 2019, page 1 and Table 1',
+    note: 'Certified a = 0.543 114 4 ± 0.000 008 nm (page 1). Input: the eleven peak positions of Table 1 (111 to 533, 2θ = 28.441° to 136.882°, λ = 0.154 059 29 nm). As for SRM 676a, these are information values computed by NIST from the certified lattice parameter, so the entry tests identification, indexing and cell refinement, not aberration handling. The certificate tabulates no intensities: equal line heights and a Gaussian profile of 0.2° FWHM are ASSUMED, and for that reason the phase score is modest (0.72, silicon first; the intensity term of the figure of merit is not meaningful here). Refined a = 5.43115 Å (+0.2 ppm). Tolerance 0.01 %.' },
+  { id: 's23-exp-osterrieth-mcm41-bet-area', suite: 23, title: 'MCM-41 round-robin N₂ isotherm: reported BET area', mode: 'bet',
+    inputs: { mode: 'bet', bet_table: BET_MCM41, bet_sigma: 0.162 }, kpi: 'ssa', expected: 1001, tol: 0.05, kind: 'experiment',
+    measured: { value: 1001, uncertainty: null, unit: 'm²/g' },
+    source: { authors: 'Osterrieth, J. W. M.; Rampersad, J.; Madden, D.; Rampal, N.; Skoric, L.; Connolly, B.; … Fairen-Jimenez, D.', title: 'How Reproducible are Surface Areas Calculated from the BET Equation?', journal: 'Adv. Mater. 34, 2201502', year: 2022, doi: '10.1002/adma.202201502', url: 'https://doi.org/10.1002/adma.202201502' },
+    conditions: 'Measured N₂ adsorption isotherm of mesoporous silica MCM-41 at 77 K (38 points, p/p₀ = 0.0098–0.94) distributed to 61 laboratories; BET area assigned by the authors\' BETSI implementation of the extended Rouquerol criteria',
+    match: ['bet_table', 'bet_sigma'],
+    reference: 'Osterrieth et al., Adv. Mater. 34, 2201502 (2022), Table 1; isotherm from the BETSI repository cited as reference 39',
+    note: 'Table 1 of the paper: BETSI area 1001 m²/g (spread of all fits passing the criteria 60 m²/g, variation coefficient 1.6 %); mean of the 61 laboratories 994 m²/g with a relative standard deviation of 15.1 %. The isotherm is the file MCM-41.csv of the repository the paper cites, used unchanged. The suite selects its own fitting window with the Rouquerol criteria and returns 969 m²/g (−3.2 %, C ≈ 101); the two programs rank the admissible fitting windows differently, and the paper does not state the limits of its 60 m²/g spread, so whether 969 m²/g lies inside it cannot be said. Tolerance 5 % covers that window-selection ambiguity; it is far below the between-laboratory scatter.' },
+  { id: 's23-exp-osterrieth-zeolite13x-bet-area', suite: 23, title: 'Zeolite 13X round-robin N₂ isotherm: reported BET area', mode: 'bet',
+    inputs: { mode: 'bet', bet_table: BET_13X, bet_sigma: 0.162 }, kpi: 'ssa', expected: 833, tol: 0.03, kind: 'experiment',
+    measured: { value: 833, uncertainty: null, unit: 'm²/g' },
+    source: { authors: 'Osterrieth, J. W. M.; Rampersad, J.; Madden, D.; Rampal, N.; Skoric, L.; Connolly, B.; … Fairen-Jimenez, D.', title: 'How Reproducible are Surface Areas Calculated from the BET Equation?', journal: 'Adv. Mater. 34, 2201502', year: 2022, doi: '10.1002/adma.202201502', url: 'https://doi.org/10.1002/adma.202201502' },
+    conditions: 'Measured N₂ adsorption isotherm of microporous zeolite 13X at 77 K (59 points, p/p₀ = 2 × 10⁻⁵–0.97) distributed to 61 laboratories; BET area assigned by the authors\' BETSI implementation of the extended Rouquerol criteria',
+    match: ['bet_table', 'bet_sigma'],
+    reference: 'Osterrieth et al., Adv. Mater. 34, 2201502 (2022), Table 1; isotherm from the BETSI repository cited as reference 39',
+    note: 'Table 1 of the paper: BETSI area 833 m²/g (spread of passing fits 4 m²/g); mean of the 61 laboratories 813 m²/g, relative standard deviation 7.4 %. Isotherm file Zeolite-13X.csv of the cited repository, unchanged. The suite returns 842 m²/g (+1.1 %) with C ≈ 4600 and warns that the area of a microporous solid is an apparent value. Tolerance 3 % for the difference in window selection between the two implementations. Eight further isotherms of the same data set were run and are not listed as entries: HKUST-1, Al fumarate, Mg-MOF-74, DMOF-1, UiO-66 and MOF-5 agree within 1.4 %, NU-1000 within 2.5 %, whereas ZIF-8 comes out at 1556 m²/g against 1709 m²/g (−9 %), outside the 5 % that window selection can explain.' },
+  { id: 's23-exp-michelson-1879-mean', suite: 23, title: 'Michelson\'s 100 speed-of-light determinations (1879): NIST-certified sample mean', mode: 'repeat',
+    inputs: { mode: 'repeat', rep_table: MICHELSON }, kpi: 'mean', expected: 299.8524, tol: 1e-10, kind: 'experiment',
+    measured: { value: 299.8524, uncertainty: null, unit: '10³ km/s' },
+    source: { authors: 'National Institute of Standards and Technology', title: 'Statistical Reference Datasets (StRD), univariate summary statistics, dataset Michelso (Speed of Light Data)', journal: 'NIST Statistical Reference Datasets', year: null, doi: null, url: 'https://www.itl.nist.gov/div898/strd/univ/data/Michelso.dat' },
+    conditions: '100 measurements of the speed of light in air by Michelson, 1879, in millions of metres per second; described by NIST as an observed, "real world" data set',
+    match: ['rep_table'],
+    reference: 'NIST Statistical Reference Datasets, Michelso.dat (data from Dorsey, Trans. Am. Philos. Soc. 34, 1–110, 1944, Table 22, as cited by NIST)',
+    note: 'Certified sample mean 299.852400000000 (header of the data file, "Certified Values"). The 100 observations are used in file order, unchanged. This is a reduction of published measurements against values certified to 15 digits, so the tolerance is numerical (10⁻¹⁰ relative). The comparison concerns the statistics of the data set only; no reference value for the speed of light in air is entered, so the bias and E_n outputs of this run carry no meaning.' },
+  { id: 's23-exp-michelson-1879-standard-deviation', suite: 23, title: 'Michelson\'s 100 speed-of-light determinations (1879): NIST-certified sample standard deviation', mode: 'repeat',
+    inputs: { mode: 'repeat', rep_table: MICHELSON }, kpi: 's', expected: 0.0790105478190518, tol: 1e-9, kind: 'experiment',
+    measured: { value: 0.0790105478190518, uncertainty: null, unit: '10³ km/s' },
+    source: { authors: 'National Institute of Standards and Technology', title: 'Statistical Reference Datasets (StRD), univariate summary statistics, dataset Michelso (Speed of Light Data)', journal: 'NIST Statistical Reference Datasets', year: null, doi: null, url: 'https://www.itl.nist.gov/div898/strd/univ/data/Michelso.dat' },
+    conditions: '100 measurements of the speed of light in air by Michelson, 1879, in millions of metres per second; described by NIST as an observed, "real world" data set',
+    match: ['rep_table'],
+    reference: 'NIST Statistical Reference Datasets, Michelso.dat (data from Dorsey, Trans. Am. Philos. Soc. 34, 1–110, 1944, Table 22, as cited by NIST)',
+    note: 'Certified sample standard deviation (denominator n − 1) 0.0790105478190518, from the header of the data file. The values lie near 299.85 with a spread of 0.08, so a single-pass sum-of-squares formula would lose about seven digits; the tolerance of 10⁻⁹ relative checks that the suite does not.' },
 ];

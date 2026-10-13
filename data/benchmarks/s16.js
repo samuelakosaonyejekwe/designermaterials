@@ -159,4 +159,25 @@ export default [
     inputs: { mode: 'defects', ...seg }, kpi: 'x_gb', expected: qSeg / (1 + qSeg), tol: 1e-6, kind: 'analytical',
     reference: 'McLean, Grain Boundaries in Metals — X_gb/(1 − X_gb) = X_b/(1 − X_b)·exp(ΔG/RT)',
   },
+  // ------------------------------------------------------------------ published experiments
+  {
+    id: 's16-exp-simmons-balluffi-al-vacancies-melting', suite: 16, title: 'Aluminium at the melting point: measured equilibrium vacancy concentration (differential dilatometry)', mode: 'defects',
+    inputs: { mode: 'defects', T_C: 660, Evf: 0.76, Svf: 2.4 }, kpi: 'c_vac', expected: 9.4e-4, tol: 0.15, kind: 'experiment',
+    measured: { value: 9.4e-4, uncertainty: null, unit: 'site fraction' },
+    source: { authors: 'Simmons, R. O.; Balluffi, R. W.', title: 'Measurements of Equilibrium Vacancy Concentrations in Aluminum', journal: 'Phys. Rev. 117, 52', year: 1960, doi: '10.1103/PhysRev.117.52', url: 'https://doi.org/10.1103/PhysRev.117.52' },
+    conditions: '99.995 % aluminium bar; macroscopic length change ΔL/L (filar micrometer microscopes) and X-ray lattice-parameter change Δa/a measured at identical temperatures from 229 to 656 °C; added site fraction 3(ΔL/L − Δa/a) at the melting point (660 °C)',
+    match: ['T_C', 'Evf', 'Svf'],
+    reference: 'Simmons & Balluffi, Phys. Rev. 117, 52 (1960)',
+    note: 'Abstract of the source: the added site fraction "could be represented by 3(ΔL/L − Δa/a) = exp(2.4)·exp(−0.76 eV/kT)" and "at the melting point (660 °C) the equilibrium concentration of additional sites is 9.4×10⁻⁴"; the authors conclude that the defects are predominantly single vacancies (divacancy share at melting estimated below about 15 %). The formation energy and entropy entered are the rounded values of that representation, so this checks the Arrhenius form against the stated end-point value; the suite gives 8.66×10⁻⁴ (−7.8 %). Rounding the formation energy to 0.01 eV alone changes the result by 13 % at this temperature, hence the 15 % tolerance. The source states no uncertainty for the value in the abstract. The numbers were read from the abstract in the open bibliographic record of the article (OpenAlex); the full text was not accessible.',
+  },
+  {
+    id: 's16-exp-simmons-balluffi-au-vacancies-melting', suite: 16, title: 'Gold just below the melting temperature: measured equilibrium vacancy concentration', mode: 'defects',
+    inputs: { mode: 'defects', T_C: 1063, Evf: 0.94, Svf: 1.0 }, kpi: 'c_vac', expected: 7.2e-4, tol: 0.15, kind: 'experiment',
+    measured: { value: 7.2e-4, uncertainty: 0.6e-4, unit: 'site fraction' },
+    source: { authors: 'Simmons, R. O.; Balluffi, R. W.', title: 'Measurement of Equilibrium Concentrations of Lattice Vacancies in Gold', journal: 'Phys. Rev. 125, 862', year: 1962, doi: '10.1103/PhysRev.125.862', url: 'https://doi.org/10.1103/PhysRev.125.862' },
+    conditions: '99.999 % gold bar; length expansion and X-ray lattice-parameter expansion measured from 15 to 1057 °C; net added site fraction 3(ΔL/L − Δa/a) just below the melting temperature, obtained by an extrapolation of 6 °C',
+    match: ['T_C', 'Evf', 'Svf'],
+    reference: 'Simmons & Balluffi, Phys. Rev. 125, 862 (1962)',
+    note: 'Abstract of the source: ΔN/N "just below the melting temperature, is (7.2 ± 0.6)×10⁻⁴ as obtained by an extrapolation of the data of only 6 °C" and "can be described by exp(1.0)·exp(−0.94 eV/kT)". The temperature entered, 1063 °C, is the upper end of the measured range (1057 °C) plus the stated 6 °C extrapolation. The suite gives 7.74×10⁻⁴ (+7.5 %), inside the stated experimental uncertainty of ±8 %; the tolerance of 15 % adds the rounding of the published energy (0.01 eV corresponds to 9 % at this temperature). The added sites include a minority of divacancies (the source: more than 80 % single vacancies for plausible binding energies), which the single-vacancy formula does not separate. The numbers were read from the abstract in the open bibliographic record of the article (OpenAlex); the full text was not accessible.',
+  },
 ];

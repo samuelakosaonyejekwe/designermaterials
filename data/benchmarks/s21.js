@@ -1,6 +1,7 @@
 // Reference benchmarks for Suite 21 — Fabrication, Synthesis and Process Engineering.
 // Every expected value is a literal handbook figure or is evaluated here from a closed-form expression with standard
 // constants; nothing is taken from the suite's output.
+// The entries of kind 'experiment' at the end compare with published measurements instead (source and location given in each entry).
 
 const R = 8.314462618, F = 96485.33212, KB = 1.380649e-23, NA = 6.02214076e23, EPS0 = 8.8541878128e-12, PI = Math.PI;
 // standard atomic weights (g/mol)
@@ -212,4 +213,37 @@ export default [
     kpi: 'byprod', expected: 2 * 0.1 * 0.9 * M_NANO3, tol: 0.001, kind: 'analytical', reference: 'Stoichiometry of Zn(NO₃)₂ + 2 NaOH → ZnO + H₂O + 2 NaNO₃' },
   { id: 's21-colloid-wash-dilution', suite: 21, title: 'Colloid batch: residual salt after three dilution washes', mode: 'electrospin_colloid', inputs: { mode: 'electrospin_colloid', col_wash: 3, col_wratio: 5 },
     kpi: 'resid', expected: 100 / 6 ** 3, tol: 1e-5, kind: 'analytical', reference: 'Repeated-dilution washing: residual fraction (1/(1 + w))ⁿ' },
+  // ------------------------------------------------------------------ published experiments
+  { id: 's21-exp-kamath-316l-track-width-150w-1200', suite: 21, title: 'LPBF single track, 316L, 150 W at 1200 mm/s: measured melt-pool width', mode: 'additive',
+    inputs: { mode: 'additive', am_proc: 'lpbf', am_mat: '316L', am_P: 150, am_v: 1200, am_spot: 54, am_t: 30 }, kpi: 'W', expected: 79, tol: 0.2, kind: 'experiment',
+    measured: { value: 79, uncertainty: null, unit: 'µm' },
+    source: { authors: 'Kamath, C.; El-dasher, B.; Gallegos, G. F.; King, W. E.; Sisto, A.', title: 'Density of Additively-Manufactured, 316L SS Parts Using Laser Powder-Bed Fusion at Powers Up to 400W', journal: 'Lawrence Livermore National Laboratory technical report LLNL-TR-648000', year: 2013, doi: '10.2172/1116929', url: 'https://www.osti.gov/biblio/1116929' },
+    conditions: 'Single tracks of 316L stainless-steel powder on a tilted build plate, Concept Laser M2, fibre laser with spot size D4σ = 54 µm, argon atmosphere; cross-section taken where the powder layer is 30 µm thick; track 12: 150 W, 1200 mm/s',
+    match: ['am_mat', 'am_P', 'am_v'],
+    reference: 'Kamath, El-dasher, Gallegos, King & Sisto, LLNL-TR-648000 (2013), Table 3',
+    note: 'Table 3 of the report (melt-pool width at the substrate, height and depth for 14 tracks); this is the track with the lowest line energy P/v (0.125 J/mm). The Rosenthal point-source solution with the suite\'s 316L constants (absorptivity 0.35) gives 79.2 µm (+0.2 %). The plate temperature is not stated in the report; the suite default preheat of 100 °C is used (25 °C gives 77.0 µm). Over all 14 tracks the width deviates by −12 % to +22 % (mean |deviation| 12 %) apart from one track (400 W, 1200 mm/s: measured 83 µm, model 130 µm, +57 %), and the measured widths themselves are not monotonic in speed at fixed power, so ±20 % is the honest tolerance. The measured DEPTHS (30–195 µm) are not reproduced: the conduction model gives depth = width/2 and is 28–64 % too shallow for 13 of the 14 tracks, which are in keyhole mode — the limit the suite states in its warnings.' },
+  { id: 's21-exp-kamath-316l-track-width-200w-500', suite: 21, title: 'LPBF single track, 316L, 200 W at 500 mm/s: measured melt-pool width', mode: 'additive',
+    inputs: { mode: 'additive', am_proc: 'lpbf', am_mat: '316L', am_P: 200, am_v: 500, am_spot: 54, am_t: 30 }, kpi: 'W', expected: 121, tol: 0.2, kind: 'experiment',
+    measured: { value: 121, uncertainty: null, unit: 'µm' },
+    source: { authors: 'Kamath, C.; El-dasher, B.; Gallegos, G. F.; King, W. E.; Sisto, A.', title: 'Density of Additively-Manufactured, 316L SS Parts Using Laser Powder-Bed Fusion at Powers Up to 400W', journal: 'Lawrence Livermore National Laboratory technical report LLNL-TR-648000', year: 2013, doi: '10.2172/1116929', url: 'https://www.osti.gov/biblio/1116929' },
+    conditions: 'Single tracks of 316L stainless-steel powder on a tilted build plate, Concept Laser M2, fibre laser with spot size D4σ = 54 µm, argon atmosphere; cross-section taken where the powder layer is 30 µm thick; track 11: 200 W, 500 mm/s',
+    match: ['am_mat', 'am_P', 'am_v'],
+    reference: 'Kamath, El-dasher, Gallegos, King & Sisto, LLNL-TR-648000 (2013), Table 3',
+    note: 'Table 3 of the report; this is the track with the highest line energy P/v (0.4 J/mm), the opposite end of the tested range from the 150 W / 1200 mm/s entry. Rosenthal solution with the suite default preheat of 100 °C (plate temperature not stated): 140.1 µm (+16 %); with 25 °C 136.1 µm. The measured depth of this track is 195 µm against a model depth of 70 µm (deep keyhole, not modelled), so only the width is offered as a comparison. Tolerance ±20 %: scatter of the measured widths plus the constant-property conduction model.' },
+  { id: 's21-exp-ahmad-clear-resin-cure-depth', suite: 21, title: 'Stereolithography working curve of a clear acrylate resin: measured cure depth at 350.4 mJ/cm²', mode: 'additive',
+    inputs: { mode: 'additive', am_proc: 'sla', sla_Dp: 231, sla_Ec: 5.87, sla_E: 350.4 }, kpi: 'cure', expected: 940, tol: 0.05, kind: 'experiment',
+    measured: { value: 940, uncertainty: null, unit: 'µm' },
+    source: { authors: 'Ahmad, K. H.; Mohamad, Z.; Khan, Z. I.; Habib, M.', title: 'Tailoring UV Penetration Depth in Photopolymer Nanocomposites: Advancing SLA 3D Printing Performance with Nanofillers', journal: 'Polymers 17, 97', year: 2025, doi: '10.3390/polym17010097', url: 'https://doi.org/10.3390/polym17010097' },
+    conditions: 'Formlabs Clear (FLGPCL04) photopolymer without filler, exposed through 2 mm × 2 mm mask windows to 405 nm light at 1.46 mW/cm² for 240 s (350.4 mJ/cm²); thickness of the cured layer measured with a micrometer',
+    match: ['sla_Dp', 'sla_Ec', 'sla_E'],
+    reference: 'Ahmad, Mohamad, Khan & Habib, Polymers 17, 97 (2025), Tables 2–4',
+    note: 'Exposure energies from Table 2, cure depths of the clear resin from Table 3 (438, 630.5, 782, 940 and 1110 µm at 43.8, 87.6, 175.2, 350.4 and 700.8 mJ/cm²), D_p = 231.00 µm and E_c = 5.87 mJ/cm² from Table 4. The Jacobs law gives 944.6 µm (+0.5 %) at this point and 464, 624, 784 and 1105 µm at the other four (+6.0, −1.0, +0.3 and −0.5 %). D_p and E_c were regressed by the authors from these same five points, so the entry tests that the measured working curve follows the logarithmic law the suite uses, not an independent prediction of the resin constants. Tolerance 5 %: the largest residual of the five points is 6 % at the lowest dose.' },
+  { id: 's21-exp-kim-ald-alumina-growth-per-cycle', suite: 21, title: 'ALD Al₂O₃ from TMA/H₂O at 150 °C: measured growth per cycle', mode: 'ald',
+    inputs: { mode: 'ald', ald_chem: 'tma', ald_T: 150, ald_tp: 1 }, kpi: 'gpc', expected: 0.11, tol: 0.1, kind: 'experiment',
+    measured: { value: 1.1, uncertainty: null, unit: 'Å/cycle' },
+    source: { authors: 'Kim, S.; Lee, S.-H.; Jo, I. H.; Seo, J.; Yoo, Y.-E.; Kim, J. H.', title: 'Influence of growth temperature on dielectric strength of Al2O3 thin films prepared via atomic layer deposition at low temperature', journal: 'Sci. Rep. 12, 5124', year: 2022, doi: '10.1038/s41598-022-09054-7', url: 'https://doi.org/10.1038/s41598-022-09054-7' },
+    conditions: 'Thermal ALD of Al₂O₃ on p-Si from trimethylaluminium and water, sequence TMA 1 s – Ar purge 40 s – H₂O 2 s – Ar purge 40 s, growth temperatures 80–250 °C; growth rate from the slope of ellipsometric thickness against number of cycles',
+    match: ['ald_chem', 'ald_T'],
+    reference: 'Kim, Lee, Jo, Seo, Yoo & Kim, Sci. Rep. 12, 5124 (2022)',
+    note: 'Results section (the abstract and the conclusion give the same figures): "The growth rate of the Al2O3 film increased from ~0.9 Å/cycle at 80 °C to ~1.1 Å/cycle above 150 °C" (Figure 1a). The suite returns 0.1129 nm/cycle (+2.6 %) for a saturated pulse; the precursor partial pressure is not stated, so the suite default (10 Pa) is used with the stated 1 s pulse, which saturates the surface. The saturated growth per cycle follows from the suite\'s tabulated ligand-limited aluminium uptake (4.0 × 10¹⁸ atoms per m² and cycle) and an assumed film density of 3000 kg/m³, so this entry checks that library calibration against an independent measurement; it is not a first-principles prediction. The suite has no temperature dependence inside the ALD window and does not reproduce the lower value of about 0.9 Å/cycle reported at 80 °C (it warns below 100 °C instead). Tolerance 10 %: the source quotes the value to two figures ("~1.1"), and reactor-to-reactor spread of this process is of that order.' },
 ];

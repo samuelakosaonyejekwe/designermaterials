@@ -365,4 +365,14 @@ export default [
     reference: 'Ledbetter & Naimon, J. Phys. Chem. Ref. Data 3, 897 (1974) — entry Haskins (1961)',
     note: 'Measured value from the comments column of table 9 (Haskins 1961: longitudinal velocity 0.479 × 10⁶ cm/s). Inputs are the recommended single-crystal stiffnesses of table 10 and the density of table 1; the specimen density of the velocity measurement is not given in the source. The velocity depends on the Hill-averaged K + 4G/3, so the 3 % shear-modulus bias of the average enters with a weight of about one sixth.'
   },
+  {
+    id: 's18-exp-nte-zrw2o8-rubber-cte', suite: 18, title: 'HNBR rubber filled with 39.7 vol % negative-expansion ZrW₂O₈: measured thermal expansion (rubbery state)', mode: 'bounds',
+    inputs: { mode: 'bounds', shape: 'sphere', E_m: 6.6e6, nu_m: 0.49, cte_m: 187e-6, E_i: 88e9, nu_i: 0.3, cte_i: -9e-6, vf: 0.397, poros: 0 }, kpi: 'cte_eff', expected: 0.54 * 187e-6, tol: 0.12, kind: 'experiment',
+    measured: { value: 54, uncertainty: null, unit: '% of the CTE of the unfilled rubber' },
+    source: { authors: 'Akulichev, Alcock, Tiwari, Echtermeyer', title: 'Thermomechanical properties of zirconium tungstate / hydrogenated nitrile butadiene rubber (HNBR) composites for low-temperature applications', journal: 'J. Mater. Sci.', year: 2016, doi: '10.1007/s10853-016-0236-6', url: 'https://arxiv.org/abs/1710.05195' },
+    conditions: 'Hydrogenated nitrile butadiene rubber filled with 39.7 vol % ZrW₂O₈ particles (α ≈ −9×10⁻⁶ K⁻¹); linear thermal expansion by dilatometry between 298 K and 403 K, above the glass transition of the rubber; average of three specimens',
+    match: ['vf', 'cte_m', 'cte_i', 'E_m', 'E_i'],
+    reference: 'Akulichev et al., J. Mater. Sci. (2016), author version arXiv:1710.05195',
+    note: 'Section 3.2 of the source: the CTE of the most highly filled compound is 54 % of that measured for the unfilled rubber; with the matrix CTE of 187×10⁻⁶ K⁻¹ of Table 2 this is 101×10⁻⁶ K⁻¹. Constituent data are those of Table 2 of the source (ZrW₂O₈: E = 88 GPa, ν = 0.3, α = −9×10⁻⁶ K⁻¹; rubber: E = 6.6 MPa). The source lists two Poisson\'s ratios for the rubber, 0.49 and 0.4995; the suite admits at most 0.49, so the lower one is entered, which understates the bulk modulus of the rubber (0.11 GPa instead of about 2.2 GPa). The predicted expansion is insensitive to this because the filler is far stiffer than the matrix in either case (the Kerner estimate is 107.9×10⁻⁶ K⁻¹ for both). The default differential scheme with the Levin relation is compared; it lies 6 % above the measurement, as do the Kerner and upper Schapery values which the source finds adequate, whereas the Turner estimate (−8.6×10⁻⁶ K⁻¹) fails for a soft matrix. The same measurement validates the Schapery bound of Suite 10. No uncertainty is quoted in the text (error bars are shown only graphically).'
+  },
 ];
