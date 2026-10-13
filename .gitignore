@@ -3,3 +3,5 @@ node_modules/
 *.log
 standalone.html
 *.xml
+DEVELOPMENT_CHECKPOINT.md
+RESUME_INSTRUCTIONS.md
