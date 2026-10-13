@@ -266,4 +266,27 @@ export default [
     expected: 1, tol: 1e-4, kind: 'analytical',
     reference: 'Stokes settling and Stokes–Einstein diffusion combined: Pe = v a/D = πΔρ g d⁴/(12kT)',
   },
+  // ------------------------------------------------------------------ published experiments
+  {
+    id: 's08-exp-stokes-einstein-ps-100nm', suite: 8, title: 'Measured diffusivity of 100 nm polystyrene spheres in water at 20 °C (DLS)', mode: 'transport',
+    inputs: { mode: 'transport', T: 20, mu: 1.002e-3, dp: 1e-7 }, kpi: 'D',
+    expected: 4.3e-12, tol: 0.05, kind: 'experiment',
+    measured: { value: 4.3, uncertainty: 0.1, unit: 'µm²/s' },
+    source: { authors: 'Safari, M. S.; Poling-Skutvik, R.; Vekilov, P. G.; Conrad, J. C.', title: 'Differential dynamic microscopy of bidisperse colloidal suspensions', journal: 'npj Microgravity', year: 2017, doi: '10.1038/s41526-017-0027-7', url: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5577322/' },
+    conditions: 'Polystyrene spheres of nominal radius 50 nm (dispersity < 5 %) in deionised water at volume fraction 10⁻³; dynamic light scattering at 20 °C, three scattering angles',
+    match: ['T', 'mu', 'dp'],
+    reference: 'Safari, Poling-Skutvik, Vekilov & Conrad, npj Microgravity (2017)',
+    note: 'Value from the Results text ("measured diffusivities of the small (4.3 ± 0.1 μm² s⁻¹) … particles") and Table 1. The viscosity of water at 20 °C (1.002 mPa·s, handbook value) is not stated in the source. The suite evaluates Stokes–Einstein from the nominal diameter; the tolerance covers the stated 5 % size dispersity and the measurement error.',
+  },
+  {
+    id: 's08-exp-stokes-einstein-ps-2um', suite: 8, title: 'Measured diffusivity of 2 µm polystyrene spheres in water at 20 °C (DLS)', mode: 'transport',
+    inputs: { mode: 'transport', T: 20, mu: 1.002e-3, dp: 2e-6 }, kpi: 'D',
+    expected: 0.20e-12, tol: 0.12, kind: 'experiment',
+    measured: { value: 0.20, uncertainty: 0.02, unit: 'µm²/s' },
+    source: { authors: 'Safari, M. S.; Poling-Skutvik, R.; Vekilov, P. G.; Conrad, J. C.', title: 'Differential dynamic microscopy of bidisperse colloidal suspensions', journal: 'npj Microgravity', year: 2017, doi: '10.1038/s41526-017-0027-7', url: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5577322/' },
+    conditions: 'Polystyrene spheres of nominal radius 1 µm (dispersity < 5 %) in deionised water; dynamic light scattering at 20 °C',
+    match: ['T', 'mu', 'dp'],
+    reference: 'Safari, Poling-Skutvik, Vekilov & Conrad, npj Microgravity (2017)',
+    note: 'Value from the Results text ("large (0.20 ± 0.02 μm² s⁻¹) particles"). Water viscosity at 20 °C (1.002 mPa·s) is a handbook value, not given in the source. The tolerance equals the reported 10 % measurement uncertainty plus the size dispersity.',
+  },
 ];

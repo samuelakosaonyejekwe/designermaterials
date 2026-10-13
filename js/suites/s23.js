@@ -370,10 +370,28 @@ function mBET(inp, o) {
   const t = o.tbl(inp.bet_table, 2, 6, 'Adsorption isotherm'), rows = t.rows.filter(r => r[0] > 0 && r[0] < 1 && r[1] > 0).sort((a, b) => a[0] - b[0]);
   if (rows.length < 6) throw new Error('Adsorption isotherm: at least 6 rows with 0 < p/p0 < 1 and positive uptake are needed.');
   const x = rows.map(r => r[0]), v = rows.map(r => r[1]), n = x.length, rq = x.map((p, i) => v[i] * (1 - p));
-  let iMax = 0; while (iMax < n - 1 && rq[iMax + 1] > rq[iMax] && x[iMax + 1] <= 0.5) iMax++;
-  let idx = x.map((_, i) => i).filter(i => x[i] >= 0.05 && x[i] <= Math.min(0.35, x[iMax])); let widened = false;
-  if (idx.length < 3) { idx = x.map((_, i) => i).filter(i => x[i] <= 0.35); widened = true; } if (idx.length < 3) idx = [0, 1, 2];
-  const bx = idx.map(i => x[i]), by = idx.map(i => x[i] / (v[i] * (1 - x[i]))), f = linfit(bx, by), sum = f.slope + f.intercept, vm = sum > 0 ? 1 / sum : NaN, Cc = f.intercept !== 0 ? f.slope / f.intercept + 1 : NaN;
+  // Rouquerol consistency criteria select the fitting window (no fixed 0.05–0.35 range):
+  //  1. v(1 − p/p₀) must increase with p/p₀ throughout the window (upper limit = end of its initial monotonic rise);
+  //  2. C > 0;  3. the monolayer pressure 1/(√C + 1) lies inside the window;  4. p/p₀ read from the isotherm at v_m agrees with it within 20 %.
+  // Every contiguous window below the limit of criterion 1 is tested with running sums; among the consistent ones the window with the most
+  // points is taken, provided its linear fit is good (R² ≥ 0.999, else ≥ 0.995), ties going to the better fit.
+  let iMax = 0; while (iMax < n - 1 && rq[iMax + 1] > rq[iMax]) iMax++;
+  const yT = x.map((p, i) => p / (v[i] * (1 - p))), ps = [[0, 0, 0, 0, 0]]; for (let i = 0; i < n; i++) { const q = ps[i]; ps.push([q[0] + x[i], q[1] + yT[i], q[2] + x[i] * x[i], q[3] + x[i] * yT[i], q[4] + yT[i] * yT[i]]); }
+  const nMin = Math.min(Math.max(3, Math.min(5, Math.floor(n / 3))), Math.max(3, iMax + 1)), stride = Math.max(1, Math.ceil((iMax + 1) / 150)); let best = null, tested = 0;
+  for (let i = 0; i <= iMax; i += stride) for (let j = i + nMin - 1; j <= iMax; j += stride) {
+    const m = j - i + 1, a = ps[j + 1], b = ps[i], sx = a[0] - b[0], sy = a[1] - b[1], sxx = a[2] - b[2] - sx * sx / m, sxy = a[3] - b[3] - sx * sy / m, syy = a[4] - b[4] - sy * sy / m; tested++;
+    if (!(sxx > 0) || !(syy > 0)) continue;
+    const sl = sxy / sxx, ic = (sy - sl * sx) / m, r2 = 1 - Math.max(0, syy - sl * sxy) / syy, c = ic !== 0 ? sl / ic + 1 : NaN, vmW = 1 / (sl + ic);
+    if (!(c > 0) || !(vmW > 0) || !(r2 >= 0.995)) continue;
+    const xmW = 1 / (Math.sqrt(c) + 1); if (xmW < x[i] - 1e-9 || xmW > x[j] + 1e-9) continue;
+    if (vmW < v[0] || vmW > v[n - 1]) continue; const xa = N.interp1(v, x, vmW); if (!(Math.abs(xa - xmW) / xmW < 0.2)) continue;
+    const tier = r2 >= 0.999 ? 1 : 0;
+    if (!best || tier > best.tier || (tier === best.tier && (m > best.m || (m === best.m && r2 > best.r2)))) best = { i, j, m, r2, tier };
+  }
+  let idx, widened = false;
+  if (best) idx = Array.from({ length: best.m }, (_, k) => best.i + k);
+  else { idx = x.map((_, i) => i).filter(i => x[i] >= 0.05 && x[i] <= Math.min(0.35, x[iMax])); widened = true; if (idx.length < 3) idx = x.map((_, i) => i).filter(i => x[i] <= 0.35); if (idx.length < 3) idx = [0, 1, 2]; }
+  const bx = idx.map(i => x[i]), by = idx.map(i => yT[i]), f = linfit(bx, by), sum = f.slope + f.intercept, vm = sum > 0 ? 1 / sum : NaN, Cc = f.intercept !== 0 ? f.slope / f.intercept + 1 : NaN;
   const ssa = vm / 22414 * N.N_A * inp.bet_sigma * 1e-18, seVm = vm * vm * Math.sqrt(Math.max(0, f.seSlope ** 2 + f.seInt ** 2 - 2 * f.mx * f.seSlope ** 2)), urel = fin(seVm / vm, 0), xm = Cc > 0 ? 1 / (Math.sqrt(Cc) + 1) : NaN, xAt = N.interp1(v, x, vm);
   const dEq = 6 / (inp.rho * ssa * 1e3), vTot = v[n - 1] * N2.liq, dPore = 4 * vTot * 1e-6 / ssa, por = vTot * 1e-6 * inp.rho * 1e3 / (1 + vTot * 1e-6 * inp.rho * 1e3);
   // t-plot (Halsey thickness) and Kelvin/BJH-style distribution on the adsorption branch
@@ -391,19 +409,19 @@ function mBET(inp, o) {
   o.K('s_ext', 't-plot external area', fin(sExt), 'm²/g', tf ? `Slope of uptake against the Harkins–Jura film thickness between 0.35 and 0.50 nm (${ti.length} points); micropore volume from the intercept ${F(fin(vMicro), 3)} cm³/g. Agreement with the BET area indicates the absence of micropores.` : 'Fewer than three points fall in the 0.35–0.50 nm thickness window, so no t-plot was fitted.');
   o.K('porosity', 'Porosity implied by pore volume', por, '', 'ε = V_p·ρ/(1 + V_p·ρ) using the skeletal density; a bed or particle porosity only if all pores were filled at the highest pressure.');
   o.S('iso', 'Adsorption isotherm', 'p/p₀', 'uptake (cm³ STP/g)', [['measured', x, v], ['BET model', x.filter(p => p < 0.5), x.filter(p => p < 0.5).map(p => (okC ? vm * Cc * p / ((1 - p) * (1 - p + Cc * p)) : 0))]], 'Measured uptake with the BET isotherm from the fitted v_m and C; the model is only expected to hold in the fitted window.');
-  o.S('bet', 'BET transform', 'p/p₀', '(p/p₀)/[v(1 − p/p₀)]', [['data in window', bx, by], ['linear fit', [bx[0], bx[bx.length - 1]], [f.intercept + f.slope * bx[0], f.intercept + f.slope * bx[bx.length - 1]]]], 'Linearised BET plot over the Rouquerol-consistent window; curvature means the window is too wide.');
+  o.S('bet', 'BET transform', 'p/p₀', '(p/p₀)/[v(1 − p/p₀)]', [['data in window', bx, by], ['linear fit', [bx[0], bx[bx.length - 1]], [f.intercept + f.slope * bx[0], f.intercept + f.slope * bx[bx.length - 1]]]], 'Linearised BET plot over the fitted window, which is selected with the Rouquerol consistency criteria (largest consistent, well-fitted run of points); curvature means the window is too wide.');
   if (pr.length >= 2) o.S('psd', 'Pore-size distribution (Kelvin, adsorption branch)', 'pore diameter (nm)', 'dV/dD (cm³/g/nm)', [['dV/dD', pr, pd]], 'Incremental liquid volume against Kelvin diameter plus film thickness; a simplified BJH estimate.');
   o.E('governing', 'BET equation (linear form)', '(p/p₀)/[v(1 − p/p₀)] = 1/(v_m·C) + (C − 1)/(v_m·C)·(p/p₀)'); o.E('formula', 'Specific surface area', 'S_BET = v_m·N_A·σ/V_molar,  V_molar = 22 414 cm³/mol'); o.E('formula', 'Kelvin equation and film thickness (N₂, 77 K)', `r_K = −2γV_m/(R·T·ln(p/p₀)) = ${F(N2.rK, 4)} nm/(−ln(p/p₀));  t_Halsey = 0.354·[5/(−ln(p/p₀))]^(1/3) nm (Kelvin correction);  t_HJ = 0.1·[13.99/(0.034 − log₁₀(p/p₀))]^½ nm (t-plot)`); o.E('formula', 'Equivalent diameter', 'd = 6/(ρ·S_BET)');
-  o.C('Rouquerol 1: v(1 − p/p₀) increases over the window', x[iMax] >= bx[bx.length - 1] - 1e-12 && !widened, `v(1 − p/p₀) rises up to p/p₀ = ${F(x[iMax], 3)}`); o.C('Rouquerol 2: C positive', okC, `C = ${F(fin(Cc), 4)}`);
+  o.C('Rouquerol 1: v(1 − p/p₀) increases over the window', x[iMax] >= bx[bx.length - 1] - 1e-12, `v(1 − p/p₀) rises up to p/p₀ = ${F(x[iMax], 3)}`); o.C('Rouquerol 2: C positive', okC, `C = ${F(fin(Cc), 4)}`);
   o.C('Rouquerol 3: monolayer pressure inside the window', okX, `1/(√C + 1) = ${F(fin(xm), 3)}`); o.C('Rouquerol 4: monolayer pressure consistent', okM, `p/p₀ at v_m read from the isotherm ${F(fin(xAt), 3)} against ${F(fin(xm), 3)}`);
-  if (widened) o.W('Fewer than three points lie in the consistent 0.05–0.35 window; the fit was widened and the surface area is unreliable.');
+  if (widened) o.W(`No pressure window of at least ${nMin} consecutive points satisfies all four Rouquerol criteria with R² ≥ 0.995 (${tested} windows tested); the conventional 0.05–0.35 range was fitted instead and the surface area depends on that choice. Check the failed criteria below; more points below p/p₀ = 0.3 usually help.`);
   if (Cc > 500) o.W('Very high C constant: microporosity is likely, the BET area is then an apparent value.');
   o.W('Assumes N₂ at 77 K (Kelvin constant, film thickness and liquid density are for nitrogen). The pore-size estimate neglects the BJH wall-film recursion and uses the adsorption branch only.');
-  o.R('high', okC && okX && okM ? `Report S_BET = ${F(ssa, 4)} m²/g with the fitted window (${F(bx[0], 2)}–${F(bx[bx.length - 1], 2)}) and C = ${F(Cc, 3)}; the consistency criteria are met.` : 'Re-select the pressure range: at least one Rouquerol consistency criterion fails, so the reported area depends on the window.', 'Rouquerol consistency checks.');
+  o.R('high', okC && okX && okM && !widened ? `Report S_BET = ${F(ssa, 4)} m²/g with the fitted window (${F(bx[0], 2)}–${F(bx[bx.length - 1], 2)}) and C = ${F(Cc, 3)}; the consistency criteria are met.` : 'Re-select the pressure range: at least one Rouquerol consistency criterion fails, so the reported area depends on the window.', 'Rouquerol consistency checks.');
   o.R('medium', `Compare the equivalent diameter ${F(fin(dEq * 1e9), 3)} nm with TEM and XRD sizes: a much smaller BET diameter indicates internal porosity or roughness, a larger one hard agglomeration.`, 'd = 6/(ρ·S) cross-check.');
   o.R('low', 'Recover or minimise liquid-nitrogen use by batching degassed samples in one dewar fill and re-using the free-space calibration where the sample tube is unchanged.', 'Cryogen consumption per isotherm.', true);
   Object.assign(o.publish, { 'geom.ssa': fin(ssa) * 1e3, 'geom.diameter': fin(dEq), 'geom.porosity': por, 'geom.pore_diameter': fin(dPore), 'cred.u_rel': urel, 'cred.rmse': f.s });
-  o.numerics = { method: 'Linear BET regression over a Rouquerol-consistent window; Harkins–Jura t-plot; Kelvin increments with Halsey film thickness', dof: idx.length, residual: f.s, notes: `${n} isotherm points` };
+  o.numerics = { method: 'Linear BET regression; window chosen by exhaustive search of contiguous point ranges against the four Rouquerol consistency criteria; Harkins–Jura t-plot; Kelvin increments with Halsey film thickness', dof: idx.length, residual: f.s, notes: `${n} isotherm points, ${tested} candidate windows tested, ${widened ? 'none consistent (conventional range used)' : 'selected p/p₀ = ' + F(bx[0], 3) + '–' + F(bx[bx.length - 1], 3)}` };
   o.summary = `The BET fit over p/p₀ = ${F(bx[0], 2)}–${F(bx[bx.length - 1], 2)} gives a specific surface area of ${F(fin(ssa), 4)} m²/g (C = ${F(fin(Cc), 3)}), equivalent to dense spheres of ${F(fin(dEq * 1e9), 3)} nm. Total pore volume is ${F(vTot, 3)} cm³/g with a mean pore diameter of ${F(fin(dPore * 1e9), 3)} nm (4V/S).`;
 }
 

@@ -178,10 +178,38 @@ const fUnit = f => (f >= 3e11 ? [1e12, 'THz'] : f >= 3e8 ? [1e9, 'GHz'] : [1e6, 
 // ---------------------------------------------------------------- negative permittivity
 const DRUDE = { Au: { einf: 9.84, wp: 9.01, g: 0.072 }, Ag: { einf: 3.7, wp: 9.2, g: 0.021 }, Al: { einf: 1, wp: 14.75, g: 0.0818 }, ITO: { einf: 3.9, wp: 1.9, g: 0.12 } };
 const EV = 1.602176634e-19 / N.HBAR; // rad/s per eV
-function wireParams(inp) { const a = inp.wire_a * 1e-3, r = Math.min(inp.wire_r * 1e-6, a / 4), wp = Math.sqrt(2 * PI * C0 * C0 / (a * a * Math.log(a / r))); return { a, r, wp, g: EPS0 * a * a * wp * wp / (PI * r * r * inp.metal_sigma) }; }
+// Plasma (cut-off) frequency of a square lattice of parallel conducting wires, E along the wires.
+//  'pendry'  : ω_p² = 2πc²/(a² ln(a/r))                      — original logarithmic thin-wire estimate
+//  'belov'   : ω_p² = 2πc²/(a² [ln(a/(2πr)) + 0.5275])        — quasi-static lattice sum (Belov, Tretyakov & Maslovski), r ≪ a and ω_p a/c ≪ 1
+//  'lattice' : dynamic lattice sum, 1/κ² = Σ_{G≠0} J₀²(Gr)/(G² − κ²), κ = ω_p/c — zero of the cell-periodic field of a uniform surface current
+//              on each wire, averaged over the wire surface (monopole order); valid for thick wires (r/a up to about 0.2) and it reduces to
+//              the 'belov' expression when κa ≪ 1. No fitted constant.
+const WIRE_SUM = {};
+function wirePlasma(a, r, model) {
+  const ra = r / a, pend = Math.sqrt(2 * PI / Math.log(1 / ra)) / a, belArg = Math.log(1 / (2 * PI * ra)) + 0.5275;
+  if (model === 'pendry') return { wp: C0 * pend, model };
+  if (model === 'belov') return belArg > 0.05 ? { wp: C0 * Math.sqrt(2 * PI / belArg) / a, model } : { wp: C0 * pend, model: 'pendry', fallback: true };
+  // dimensionless: lengths in units of a, G = 2π(m, n)
+  const key = ra.toPrecision(6); if (WIRE_SUM[key]) return { wp: C0 * WIRE_SUM[key] / a, model };
+  const Mc = Math.min(60, Math.max(16, Math.ceil(6 / (2 * PI * ra)))), Gc = 2 * PI * Mc, G2 = [], J2 = [], mult = [];
+  for (let m = 1; m <= Mc; m++) for (let n = 0; n <= m; n++) { const g = 2 * PI * Math.hypot(m, n); if (g > Gc) continue; G2.push(g * g); const j = N.besselJ(0, g * ra); J2.push(j * j); mult.push(n === 0 || n === m ? 4 : 8); }
+  // static part Σ J₀²/G²: numerical with an integral tail when the cut-off resolves the wire (G_c r ≥ 6), otherwise the thin-wire closed form
+  let stat; if (Gc * ra >= 5.9) { stat = 1 / (2 * PI * PI * ra * Gc); for (let i = 0; i < G2.length; i++) stat += mult[i] * J2[i] / G2[i]; } else stat = belArg / (2 * PI);
+  const f = k2 => { let d = 0; for (let i = 0; i < G2.length; i++) d += mult[i] * J2[i] * k2 / (G2[i] * (G2[i] - k2)); return 1 / k2 - stat - d; };
+  let lo = 1e-8, hi = 4 * PI * PI * (1 - 1e-9); for (let i = 0; i < 70; i++) { const m = 0.5 * (lo + hi); if (f(m) > 0) lo = m; else hi = m; }
+  const ka = Math.sqrt(0.5 * (lo + hi)); WIRE_SUM[key] = ka; return { wp: C0 * ka / a, model };
+}
+function wireParams(inp) { const a = inp.wire_a * 1e-3, r = Math.min(inp.wire_r * 1e-6, a / 4), q = wirePlasma(a, r, ['pendry', 'belov'].includes(inp.wire_model) ? inp.wire_model : 'lattice'), wp = q.wp; return { a, r, wp, model: q.model, fallback: !!q.fallback, wpPendry: wirePlasma(a, r, 'pendry').wp, g: EPS0 * a * a * wp * wp / (PI * r * r * inp.metal_sigma) }; }
+const WIRE_MODEL = { pendry: ['Pendry\'s thin-wire formula, ω_p² = 2πc²/(a² ln(a/r))', 'ω_p² = 2πc₀²/(a² ln(a/r))'], belov: ['the quasi-static lattice-sum formula, ω_p² = 2πc²/(a² [ln(a/(2πr)) + 0.5275])', 'ω_p² = 2πc₀²/(a² [ln(a/(2πr)) + 0.5275])'], lattice: ['the dynamic lattice sum 1/κ² = Σ J₀²(Gr)/(G² − κ²), κ = ω_p/c, valid also for thick wires', '(c₀/ω_p)² = Σ_{G≠0} J₀²(Gr)/(G² − ω_p²/c₀²),  G = 2π(m, n)/a'] };
 function negEps(inp) {
   const W = [], wire = inp.medium === 'wire'; let einf, wp, g, wp_ = null;
-  if (wire) { wp_ = wireParams(inp); einf = 1; wp = wp_.wp; g = wp_.g; if (inp.wire_r * 1e-6 > wp_.a / 4) W.push('Wire radius limited to a quarter of the period; the thin-wire model needs r ≪ a.'); }
+  if (wire) { wp_ = wireParams(inp); einf = 1; wp = wp_.wp; g = wp_.g; if (inp.wire_r * 1e-6 > wp_.a / 4) W.push('Wire radius limited to a quarter of the period.');
+    const ra = wp_.r / wp_.a;
+    if (wp_.fallback) W.push('The quasi-static formula has no solution for wires this thick (ln(a/2πr) + 0.5275 ≤ 0); Pendry\'s expression was used. Select the dynamic lattice sum.');
+    if (wp_.model === 'pendry' && ra > 0.01) W.push(`Pendry's logarithmic formula is a thin-wire estimate: at r/a = ${f3(ra)} it lies ${f3(100 * (1 - wp_.wpPendry / wirePlasma(wp_.a, wp_.r, 'lattice').wp))} % below the lattice-sum plasma frequency.`);
+    if (wp_.model === 'belov' && ra > 0.05) W.push(`The quasi-static formula assumes r ≪ a and ω_p a/c ≪ 1; at r/a = ${f3(ra)} it lies ${f3(100 * (wp / wirePlasma(wp_.a, wp_.r, 'lattice').wp - 1))} % above the dynamic lattice sum.`);
+    if (ra > 0.2) W.push('For r/a above about 0.2 the wires are no longer thin on the scale of the cell: higher multipoles of the wire current matter and the monopole lattice sum is approximate (a full-wave band calculation is needed).');
+    const dsk = Math.sqrt(2 / (wp * N.MU0 * inp.metal_sigma)); if (dsk < 0.5 * wp_.r) W.push(`The skin depth at the plasma frequency (${f3(dsk * 1e6)} µm) is well below the wire radius: the current flows in a surface layer, so the d.c.-resistance damping rate underestimates the loss by a factor of about ${f3(wp_.r / (2 * dsk))}.`); }
   else { const d = DRUDE[inp.medium] || DRUDE.Ag; einf = d.einf; wp = d.wp * EV; g = d.g * EV; }
   const eps = w => C.sub(C.of(einf), C.div(C.of(wp * wp), C.mul(C.of(w), C.of(w, g)))), wenz2 = wp * wp / einf - g * g, wenz = wenz2 > 0 ? Math.sqrt(wenz2) : 0;
   const fp = wp / (2 * PI), [sc, un] = fUnit(fp), ws = N.linspace(0.03 * wp, Math.max(1.5 * wp / Math.sqrt(einf), 0.2 * wp), 300), E = ws.map(eps), wpr = inp.f_rel * (wenz || wp / Math.sqrt(einf)), ep = eps(wpr), np = csqrt(ep);
@@ -194,7 +222,7 @@ function negEps(inp) {
   return {
     summary: `${wire ? `A wire lattice (radius ${inp.wire_r} µm, period ${inp.wire_a} mm)` : `${inp.medium} (Drude model)`} has a plasma frequency of ${f3(fp / sc)} ${un} and Re ε < 0 from DC up to the epsilon-near-zero frequency ${f3(wenz / (2 * PI) / sc)} ${un}. At ${f3(wpr / (2 * PI) / sc)} ${un} the permittivity is ${cx(ep)}, the skin depth ${f3(skin(wpr) * (wire ? 1e3 : 1e9))} ${wire ? 'mm' : 'nm'} and a thick slab reflects ${f3(100 * Rf(wpr))} %.`,
     kpis: [
-      kpi('fp', 'Plasma frequency', fp / sc, un, wire ? 'Effective plasma frequency of the wire lattice from Pendry\'s formula, ω_p² = 2πc²/(a² ln(a/r)); it depends only on geometry.' : 'Unscreened Drude plasma frequency of the free-electron gas.'),
+      kpi('fp', 'Plasma frequency', fp / sc, un, wire ? `Effective plasma frequency of the wire lattice from ${WIRE_MODEL[wp_.model][0]}; it depends only on geometry. Pendry's thin-wire estimate gives ${f3(wp_.wpPendry / (2 * PI) / sc)} ${un}.` : 'Unscreened Drude plasma frequency of the free-electron gas.'),
       kpi('f_enz', 'Epsilon-near-zero frequency', wenz / (2 * PI) / sc, un, 'Frequency where Re ε crosses zero, √(ω_p²/ε∞ − γ²); below it the medium is opaque and reflective, above it transparent.', wenz > 0),
       kpi('lam_enz', 'ENZ free-space wavelength', wenz ? 2 * PI * C0 / wenz * (wire ? 1e3 : 1e9) : 0, wire ? 'mm' : 'nm', 'Free-space wavelength at the epsilon-near-zero point; field enhancement and wavelength stretching occur around it.'),
       kpi('gamma', 'Damping rate γ/2π', g / (2 * PI) / sc, un, wire ? 'Collision rate from the finite wire conductivity, γ = ε₀a²ω_p²/(πr²σ); thinner or more resistive wires are lossier.' : 'Electron collision rate of the Drude fit; it sets ohmic loss and plasmon linewidth.'),
@@ -211,7 +239,7 @@ function negEps(inp) {
     ],
     equations: [
       eqn('constitutive', 'Drude permittivity', 'ε(ω) = ε∞ − ω_p²/(ω(ω + iγ))', 'time convention e^(−iωt), so Im ε ≥ 0 for a passive medium'),
-      ...(wire ? [eqn('formula', 'Thin-wire effective plasma frequency (Pendry)', 'ω_p² = 2πc₀²/(a² ln(a/r)),  γ = ε₀ a² ω_p²/(π r² σ)')] : matEquations([inp.medium])),
+      ...(wire ? [eqn('formula', 'Wire-lattice plasma frequency', WIRE_MODEL[wp_.model][1], wp_.model === 'lattice' ? 'cell-periodic field of a uniform surface current on each wire vanishing on the wire surface; reduces to ω_p² = 2πc₀²/(a² [ln(a/(2πr)) + 0.5275]) for thin wires' : undefined), eqn('formula', 'Damping of the wire medium', 'γ = ε₀ a² ω_p²/(π r² σ)', 'd.c. resistance of the wire over its inductance per unit length')] : matEquations([inp.medium])),
       eqn('formula', 'ENZ condition', 'Re ε(ω) = 0  ⇒  ω_ENZ = √(ω_p²/ε∞ − γ²)'), eqn('formula', 'Skin depth', 'δ = c₀/(ω Im √ε)'),
     ],
     checks: [
@@ -228,39 +256,76 @@ function negEps(inp) {
       rec('low', wire ? 'Printed copper or aluminium wire grids replace bulk metal with a metal fill fraction below 10⁻⁴, saving material and mass in shields and radomes.' : 'Where performance allows, substitute aluminium or transparent conducting oxides for gold and silver to reduce reliance on precious metals.', 'Material efficiency and critical raw materials', true),
     ],
     publish: { 'eff.eps': ep.re, 'res.f0': wenz / (2 * PI), 'res.bandgap_lo': 0, 'res.bandgap_hi': wenz / (2 * PI), 'eff.n': np.re },
-    numerics: { method: 'Closed-form Drude dispersion; Pendry thin-wire homogenisation; numerical Kramers–Kronig quadrature', dof: ws.length, notes: 'Local, isotropic (for field along the wires) effective medium; spatial dispersion of wire media not included.' },
+    numerics: { method: 'Closed-form Drude dispersion; wire-lattice plasma frequency by bisection on the reciprocal-lattice sum (or the selected closed form); numerical Kramers–Kronig quadrature', dof: ws.length, notes: 'Local, isotropic (for field along the wires) effective medium; spatial dispersion of wire media not included.' },
   };
 }
 
 // ---------------------------------------------------------------- negative permeability (split-ring resonators)
+// Two ring models:
+//  'cylinder' — Pendry's formula for rings stacked densely along their axis (or split cylinders), ω₀² = 3 l c₀²/(π ln(2c/d) r³), F = πr²/a².
+//               It assumes l ≪ r; applied to a single printed ring pair it overestimates the resonance several-fold.
+//  'planar'   — printed (edge-coupled) double split ring as a quasi-static LC circuit (Marqués, Mesa, Martel & Medina): L is the inductance of one
+//               flat ring of mean radius r₀ = r + c + d/2 and width c carrying a uniform sheet current; the two ring halves on either side of the
+//               splits form capacitors π r₀ C′ in series, C = π r₀ C′/2, with C′ the per-unit-length capacitance of coplanar strips of width c and
+//               gap d on a substrate of thickness h (conformal mapping). ω₀ = 1/√(LC). No fitted constant.
+//               Smith et al. (Phys. Rev. Lett. 84, 4184, 2000): r = 1.5, c = 0.8, d = 0.2 mm, measured 4.845 GHz; this model gives 4.66 GHz on a
+//               0.25 mm FR-4-type board (ε_r = 4.4, assumed — the source does not specify the laminate), the cylinder formula 49.8 GHz.
+const ellipK = k => { let a = 1, b = Math.sqrt(Math.max(1 - k * k, 1e-300)); for (let i = 0; i < 40 && Math.abs(a - b) > 1e-15 * a; i++) { const t = 0.5 * (a + b); b = Math.sqrt(a * b); a = t; } return PI / (2 * a); };
+const kRatio = k => (k < 1e-8 ? PI / (2 * Math.log(4 / Math.max(k, 1e-300))) : ellipK(k) / ellipK(Math.sqrt(1 - k * k)));   // K(k)/K(k′)
+function cpsCapacitance(c, d, h, er) {   // F/m, coplanar strips of width c separated by d on a substrate (thickness h, permittivity er) in air
+  const k = d / (d + 2 * c), x1 = PI * d / (4 * h), x2 = PI * (d + 2 * c) / (4 * h), k1 = x2 > 30 ? Math.exp(x1 - x2) * (x1 > 30 ? 1 : 1 - Math.exp(-2 * x1)) : Math.sinh(x1) / Math.sinh(x2);
+  const q = 0.5 * kRatio(k1) / kRatio(k), ee = 1 + (er - 1) * N.clamp(q, 0, 0.5); return { C: EPS0 * ee / kRatio(k), ee, Cair: EPS0 / kRatio(k) };
+}
+// Self-inductance of a flat annulus r0 ± c/2 carrying a uniform azimuthal sheet current: L = (1/c²) ∫∫ M(ρ₁, ρ₂) dρ₁ dρ₂ with Maxwell's mutual
+// inductance of coaxial coplanar filaments, M = µ₀√(ρ₁ρ₂)[(2/κ − κ)K(κ) − (2/κ)E(κ)], κ² = 4ρ₁ρ₂/(ρ₁ + ρ₂)². Midpoint rule on n × n cells; the
+// logarithmic singularity of the diagonal cells is integrated analytically (cell average of ln(1/|x − y|) = 3/2 − ln h).
+function ellipKE(k) { let a = 1, b = Math.sqrt(Math.max(1 - k * k, 1e-300)), cc = k, sum = 0.5 * cc * cc, pw = 0.5; for (let i = 0; i < 40 && Math.abs(cc) > 1e-16; i++) { const t = 0.5 * (a + b); cc = 0.5 * (a - b); b = Math.sqrt(a * b); a = t; pw *= 2; sum += pw * cc * cc; } const K = PI / (2 * a); return [K, K * (1 - sum)]; }
+function ringInductance(r0, c) {   // H
+  const n = 24, h = c / n; let L = 0;
+  for (let i = 0; i < n; i++) { const p1 = r0 - c / 2 + (i + 0.5) * h; L += MU0 * p1 * (Math.log(8 * p1 / h) - 0.5);
+    for (let j = 0; j < i; j++) { const p2 = r0 - c / 2 + (j + 0.5) * h, kap = 2 * Math.sqrt(p1 * p2) / (p1 + p2), [K, E] = ellipKE(kap); L += 2 * MU0 * Math.sqrt(p1 * p2) * ((2 / kap - kap) * K - (2 / kap) * E); } }
+  return L / (n * n);
+}
 function srrParams(inp) {
-  const r = inp.srr_r * 1e-3, a = Math.max(inp.srr_a * 1e-3, 2.05 * r), c = inp.srr_c * 1e-3, d = Math.min(inp.srr_d * 1e-3, 1.9 * c), l = inp.srr_l * 1e-3;
-  const w0 = Math.sqrt(3 * l * C0 * C0 / (PI * Math.log(2 * c / d) * r ** 3)), Fm = PI * r * r / (a * a), dskin = Math.sqrt(2 / (w0 * MU0 * inp.metal_sigma)), teff = Math.min(inp.srr_t * 1e-6, dskin);
-  const R1 = 1 / (inp.metal_sigma * c * teff), G = 2 * l * R1 / (r * MU0), Lr = MU0 * PI * r * r / l, Cr = 1 / (w0 * w0 * Lr);
-  return { r, a, c, d, l, w0, Fm, G, Lr, Cr, dskin, clampA: inp.srr_a * 1e-3 < 2.05 * r, clampD: inp.srr_d * 1e-3 > 1.9 * c };
+  const planar = inp.srr_type !== 'cylinder', r = inp.srr_r * 1e-3, c = inp.srr_c * 1e-3, d = Math.min(inp.srr_d * 1e-3, 1.9 * c), l = inp.srr_l * 1e-3, rOut = r + 2 * c + d, r0 = r + c + d / 2;
+  const aMin = planar ? 2.02 * rOut : 2.05 * r, a = Math.max(inp.srr_a * 1e-3, aMin), clampA = inp.srr_a * 1e-3 < aMin, clampD = inp.srr_d * 1e-3 > 1.9 * c;
+  if (!planar) {
+    const w0 = Math.sqrt(3 * l * C0 * C0 / (PI * Math.log(2 * c / d) * r ** 3)), Fm = PI * r * r / (a * a), dskin = Math.sqrt(2 / (w0 * MU0 * inp.metal_sigma)), teff = Math.min(inp.srr_t * 1e-6, dskin);
+    const R1 = 1 / (inp.metal_sigma * c * teff), G = 2 * l * R1 / (r * MU0), Lr = MU0 * PI * r * r / l, Cr = 1 / (w0 * w0 * Lr);
+    return { planar, r, a, c, d, l, w0, Fm, G, Lr, Cr, dskin, clampA, clampD, r0, rOut };
+  }
+  const cap = cpsCapacitance(c, d, Math.max(inp.srr_h * 1e-3, 1e-9), inp.srr_epsr), Lr = ringInductance(r0, c), Cr = PI * r0 * cap.C / 2, w0 = 1 / Math.sqrt(Lr * Cr);
+  const dskin = Math.sqrt(2 / (w0 * MU0 * inp.metal_sigma)), teff = Math.min(inp.srr_t * 1e-6, dskin), R = (4 * PI * r0 / 3) / (inp.metal_sigma * c * teff), G = R / Lr;
+  const Fraw = MU0 * PI * PI * r0 ** 4 / (Lr * a * a * l), Fm = Math.min(Fraw, 0.9);
+  return { planar, r, a, c, d, l, w0, Fm, Fraw, G, Lr, Cr, dskin, clampA, clampD, r0, rOut, R, ee: cap.ee, Cpul: cap.C, f0air: 1 / Math.sqrt(Lr * PI * r0 * cap.Cair / 2) / (2 * PI) };
 }
 const muPendry = (w, w0, F, G) => C.sub(ONE, C.div(C.of(F * w * w), C.of(w * w - w0 * w0, G * w)));
 function negMu(inp) {
   const W = [], p = srrParams(inp), { w0, Fm, G } = p, wmp = w0 / Math.sqrt(1 - Fm), f0 = w0 / (2 * PI), [sc, un] = fUnit(f0);
   const mu = w => muPendry(w, w0, Fm, G), ws = N.linspace(0.6 * w0, Math.max(1.6 * w0, 1.25 * wmp), 400), Mu = ws.map(mu), neg = band(ws, Mu.map(m => m.re < 0)), wpr = inp.f_rel * w0, mp = mu(wpr), imin = N.argmin(Mu.map(m => m.re));
   const lamA = 2 * PI * C0 / w0 / p.a;
-  if (p.clampA) W.push('Lattice period raised to 2.05 ring radii so that neighbouring rings do not overlap.');
+  if (p.clampA) W.push(p.planar ? `Lattice period raised to ${f3(p.a * 1e3)} mm: the outer ring (radius r + 2c + d = ${f3(p.rOut * 1e3)} mm) must fit inside the cell.` : 'Lattice period raised to 2.05 ring radii so that neighbouring rings do not overlap.');
+  if (p.planar && p.Fraw > 0.9) W.push('The magnetic oscillator strength of this dense stack exceeds 0.9 and was limited: rings this closely stacked couple strongly and the dilute mixing rule no longer holds (use the cylinder formula for l ≪ r).');
+  if (p.planar && p.c > 0.6 * p.r0) W.push('The ring width exceeds 60 % of the mean radius: the uniform-current ring inductance and the coplanar-strip capacitance (which ignores curvature) become rough estimates.');
+  if (p.planar && p.d < inp.srr_t * 1e-6) W.push('The gap between the rings is smaller than the metal thickness: the parallel-plate capacitance of the facing ring edges, not included in the zero-thickness coplanar-strip formula, lowers the real resonance.');
+  if (p.planar && p.l < 0.5 * p.r0) W.push('Rings stacked closer than about half their radius couple inductively: the single-ring inductance used here is too large and the resonance of the stack lies higher (towards the cylinder formula).');
+  if (!p.planar && p.l > p.r) W.push(`The cylinder formula assumes rings stacked much closer than their radius (l ≪ r); here l/r = ${f3(p.l / p.r)}. For printed ring pairs that are not densely stacked it overestimates the resonance several-fold (49.8 GHz instead of the measured 4.845 GHz for the rings of Smith et al., 2000): select the planar model.`);
   if (p.clampD) W.push('Ring gap limited to 1.9 ring widths: the capacitance formula needs ln(2c/d) > 0.');
   if (!neg) W.push('Loss is too high for Re µ to become negative: use thicker or more conductive rings, or a larger filling factor.');
   if (lamA < 5) W.push(`The free-space wavelength at resonance is only ${f3(lamA)} lattice periods; the effective-medium description is marginal.`);
   const fl = ws.map(w => w / (2 * PI) / sc);
   return {
-    summary: `The split-ring medium resonates at ${f3(f0 / sc)} ${un} (ring radius ${inp.srr_r} mm, filling factor ${f3(Fm)}). ${neg ? `Re µ is negative from ${f3(neg[0] / (2 * PI) / sc)} to ${f3(neg[1] / (2 * PI) / sc)} ${un}, reaching ${f3(Mu[imin].re)}` : 'Re µ stays positive'}; the lossless magnetic plasma frequency is ${f3(wmp / (2 * PI) / sc)} ${un}. At the probe frequency µ = ${cx(mp)}.`,
+    summary: `The split-ring medium resonates at ${f3(f0 / sc)} ${un} (${p.planar ? `planar edge-coupled rings, quasi-static LC model: L = ${f3(p.Lr * 1e9)} nH, C = ${f3(p.Cr * 1e12)} pF, substrate ε_eff = ${f3(p.ee)}; ` : 'Pendry cylinder/stack formula; '}inner ring radius ${inp.srr_r} mm, oscillator strength ${f3(Fm)}). ${neg ? `Re µ is negative from ${f3(neg[0] / (2 * PI) / sc)} to ${f3(neg[1] / (2 * PI) / sc)} ${un}, reaching ${f3(Mu[imin].re)}` : 'Re µ stays positive'}; the lossless magnetic plasma frequency is ${f3(wmp / (2 * PI) / sc)} ${un}. At the probe frequency µ = ${cx(mp)}.`,
     kpis: [
-      kpi('f0', 'Magnetic resonance frequency', f0 / sc, un, 'LC resonance of the split rings from Pendry\'s model, ω₀² = 3l·c₀²/(π ln(2c/d) r³); it scales as r^(−3/2).'),
+      kpi('f0', 'Magnetic resonance frequency', f0 / sc, un, p.planar ? `Quasi-static LC resonance of the printed ring pair, ω₀ = 1/√(LC) with the flat-ring inductance and the series capacitance of the two ring halves across the inter-ring gap; without the substrate it would be ${f3(p.f0air / sc)} ${un}.` : 'LC resonance of the split rings from Pendry\'s model for densely stacked rings, ω₀² = 3l·c₀²/(π ln(2c/d) r³); it scales as r^(−3/2).'),
       kpi('fmp', 'Magnetic plasma frequency', wmp / (2 * PI) / sc, un, 'Upper edge of the lossless negative-µ band, ω₀/√(1 − F); the band widens with filling factor.'),
-      kpi('F', 'Filling factor', Fm, '–', 'Fraction of the unit-cell area enclosed by the ring, πr²/a²; it is the strength of the magnetic resonance.'),
+      kpi('F', 'Filling factor', Fm, '–', p.planar ? 'Oscillator strength of the magnetic resonance, µ₀π²r₀⁴/(L a² l): the magnetic polarisability of one ring pair times the ring density; it plays the role of the filling factor πr²/a² of the cylinder model.' : 'Fraction of the unit-cell area enclosed by the ring, πr²/a²; it is the strength of the magnetic resonance.'),
       kpi('neg_lo', 'Negative-µ band lower edge', neg ? neg[0] / (2 * PI) / sc : 0, un, 'Lowest frequency in the sweep with Re µ < 0 including loss (zero if there is no negative band).', !!neg),
       kpi('neg_hi', 'Negative-µ band upper edge', neg ? neg[1] / (2 * PI) / sc : 0, un, 'Highest frequency with Re µ < 0 including loss; slightly below the lossless magnetic plasma frequency.', !!neg),
       kpi('mu_min', 'Most negative Re µ', Mu[imin].re, '–', `Minimum of the real permeability, reached at ${f3(fl[imin])} ${un} just above resonance; loss limits how negative it can go.`, Mu[imin].re < 0),
-      kpi('Q', 'Resonator quality factor', w0 / G, '–', 'ω₀/Γ with Γ = 2lσ₁/(rµ₀) from the ohmic resistance of the ring per unit circumference (skin-depth limited).', w0 / G > 30),
-      kpi('L', 'Ring inductance (per ring)', p.Lr * 1e9, 'nH', 'Solenoid-like inductance µ₀πr²/l of a ring in the stack; with the capacitance it reproduces the resonance.'),
-      kpi('Cring', 'Effective ring capacitance', p.Cr * 1e12, 'pF', 'Capacitance 1/(ω₀²L) between the two concentric rings implied by the resonance frequency.'),
+      kpi('Q', 'Resonator quality factor', w0 / G, '–', p.planar ? `ω₀L/R with R = ${f3(p.R)} Ω, the ohmic resistance of the two rings for a current that swaps linearly between them (⅔ of a single closed ring), skin-depth limited; dielectric and radiation loss are not included, so measured values are lower.` : 'ω₀/Γ with Γ = 2lσ₁/(rµ₀) from the ohmic resistance of the ring per unit circumference (skin-depth limited).', w0 / G > 30),
+      kpi('L', 'Ring inductance (per ring)', p.Lr * 1e9, 'nH', p.planar ? `Self-inductance of one flat ring of mean radius ${f3(p.r0 * 1e3)} mm and width ${f3(p.c * 1e3)} mm with uniform sheet current (double integral of the mutual inductance of coaxial filaments); close to µ₀r₀[ln(8r₀/c) − ½] for narrow rings.` : 'Solenoid-like inductance µ₀πr²/l of a ring in the stack; with the capacitance it reproduces the resonance.'),
+      kpi('Cring', 'Effective ring capacitance', p.Cr * 1e12, 'pF', p.planar ? `Series capacitance πr₀C′/2 of the two ring halves, with C′ = ${f3(p.Cpul * 1e12)} pF/m for coplanar strips on the substrate (effective permittivity ${f3(p.ee)}).` : 'Capacitance 1/(ω₀²L) between the two concentric rings implied by the resonance frequency.'),
       kpi('mu_re', 'Re µ at probe frequency', mp.re, '–', `Real effective permeability at ${f3(inp.f_rel)} × f₀; choose a probe between the resonance and the magnetic plasma frequency to obtain a negative value.`, mp.re < 0),
       kpi('mu_im', 'Im µ at probe frequency', mp.im, '–', 'Magnetic loss at the probe frequency; non-negative for a passive medium.', mp.im >= 0),
       kpi('lam_a', 'Wavelength per lattice period', lamA, '–', 'Free-space wavelength at resonance divided by the lattice constant; values above about 5–10 justify homogenisation.', lamA > 5),
@@ -270,12 +335,18 @@ function negMu(inp) {
       ser('tand', 'Magnetic loss tangent', `frequency (${un})`, 'Im µ/|Re µ| (–)', [{ name: 'loss tangent', x: fl, y: Mu.map(m => pos(Math.min(m.im / Math.max(Math.abs(m.re), 1e-6), 1e3))) }], 'Ratio of magnetic loss to stored response. Operate towards the upper part of the negative band where the loss tangent is lower, at the price of a smaller |µ|.', { logy: true }),
     ],
     equations: [
-      eqn('constitutive', 'Split-ring effective permeability (Pendry)', 'µ(ω) = 1 − F ω²/(ω² − ω₀² + iΓω)', 'e^(−iωt) convention'), eqn('formula', 'Resonance and damping', 'ω₀² = 3 l c₀²/(π ln(2c/d) r³),  Γ = 2 l σ₁/(r µ₀),  F = π r²/a²'),
-      eqn('formula', 'Negative band (lossless)', 'ω₀ < ω < ω₀/√(1 − F)'), eqn('formula', 'Equivalent circuit', 'L = µ₀ π r²/l,  C = 1/(ω₀² L)'),
+      eqn('constitutive', 'Split-ring effective permeability (Pendry)', 'µ(ω) = 1 − F ω²/(ω² − ω₀² + iΓω)', 'e^(−iωt) convention'), ...(p.planar ? [eqn('formula', 'Planar edge-coupled ring: resonance', 'ω₀ = 1/√(L C),   C = π r₀ C′/2,   r₀ = r + c + d/2', 'two ring halves of capacitance π r₀ C′ in series across the splits'),
+        eqn('formula', 'Inter-ring capacitance per unit length (coplanar strips)', 'C′ = ε₀ ε_eff K(k′)/K(k),  k = d/(d + 2c),  ε_eff = 1 + ½(ε_r − 1)·[K(k′)/K(k)]·[K(k₁)/K(k₁′)],  k₁ = sinh(πd/4h)/sinh(π(d + 2c)/4h)'),
+        eqn('formula', 'Ring inductance (uniform sheet current)', 'L = (1/c²) ∫∫ M(ρ₁, ρ₂) dρ₁ dρ₂,   M = µ₀ √(ρ₁ρ₂) [(2/κ − κ) K(κ) − (2/κ) E(κ)],   κ² = 4ρ₁ρ₂/(ρ₁ + ρ₂)²', 'integration across the ring width r₀ ± c/2; tends to µ₀ r₀ [ln(8r₀/c) − ½] for narrow rings'),
+        eqn('formula', 'Oscillator strength and damping', 'F = µ₀ π² r₀⁴/(L a² l),   Γ = R/L,   R = (4π r₀/3)/(σ c t_eff)')]
+        : [eqn('formula', 'Resonance and damping', 'ω₀² = 3 l c₀²/(π ln(2c/d) r³),  Γ = 2 l σ₁/(r µ₀),  F = π r²/a²'), eqn('formula', 'Equivalent circuit', 'L = µ₀ π r²/l,  C = 1/(ω₀² L)')]),
+      eqn('formula', 'Negative band (lossless)', 'ω₀ < ω < ω₀/√(1 − F)'),
     ],
     checks: [
       chk('Passivity: Im µ ≥ 0', Mu.every(m => m.im >= 0), `min Im µ = ${f3(N.minOf(Mu.map(m => m.im)))}`),
       kkCheck('Causality (Kramers–Kronig) of µ − µ(∞)', w => C.sub(mu(w), C.of(1 - Fm)), wpr, w0, G / w0),
+      ...(p.planar ? [chk('Ring inductance consistent with the narrow-ring asymptote', Math.abs(p.Lr / (MU0 * p.r0 * (Math.log(8 * p.r0 / p.c) - 0.5)) - 1) < 0.15, `numerical ${f3(p.Lr * 1e9)} nH vs µ₀r₀[ln(8r₀/c) − ½] = ${f3(MU0 * p.r0 * (Math.log(8 * p.r0 / p.c) - 0.5) * 1e9)} nH`),
+        chk('Quasi-static ring (circumference below half the guided wavelength)', 2 * PI * p.r0 < 2 * PI * C0 / w0 / (2 * Math.sqrt(p.ee)), `2πr₀ = ${f3(2 * PI * p.r0 * 1e3)} mm vs half the guided wavelength ${f3(2 * PI * C0 / w0 / (2 * Math.sqrt(p.ee)) * 1e3)} mm`)] : []),
       chk('Pendry reference geometry reproduced', Math.abs(Math.sqrt(3 * 2e-3 * C0 * C0 / (PI * Math.log(20) * 8e-9)) / (2 * PI) / 1e9 - 13.5) < 0.1, 'r = 2 mm, c = 1 mm, d = 0.1 mm, l = 2 mm gives 13.5 GHz as in the original model'),
       chk('Effective-medium validity (λ₀/a > 5)', lamA > 5, `λ₀/a = ${f3(lamA)}`), chk('Negative-permeability band present', !!neg, neg ? `width ${f3((neg[1] - neg[0]) / (2 * PI) / sc)} ${un}` : 'none with this loss level'),
     ],
@@ -287,7 +358,7 @@ function negMu(inp) {
       rec('low', 'Standard printed-circuit laminates and thin copper suffice; avoid thick precious-metal plating, which the skin depth makes redundant.', 'Material efficiency from the skin-depth result', true),
     ],
     publish: { 'eff.mu': mp.re, 'res.f0': f0, 'res.Q': w0 / G, ...(neg ? { 'res.bandgap_lo': neg[0] / (2 * PI), 'res.bandgap_hi': neg[1] / (2 * PI) } : {}) },
-    numerics: { method: 'Pendry split-ring homogenisation (closed form); numerical Kramers–Kronig quadrature', dof: ws.length, notes: 'Quasi-static rings, no bianisotropy or inter-ring coupling beyond the mean-field depolarisation.' },
+    numerics: { method: p.planar ? 'Quasi-static LC model of the planar ring pair (24 × 24 quadrature of the filament mutual inductance for L, arithmetic–geometric mean for the elliptic integrals); Lorentz permeability; numerical Kramers–Kronig quadrature' : 'Pendry split-ring homogenisation (closed form); numerical Kramers–Kronig quadrature', dof: ws.length, notes: 'Quasi-static rings, no bianisotropy or inter-ring coupling beyond the mean-field depolarisation.' },
   };
 }
 
@@ -645,15 +716,19 @@ export default {
     { key: 'n_user', label: 'Custom material n', unit: '–', value: 2, min: 0.05, max: 6, group: 'Custom material', showIf: M('multilayer', 'mie', 'effmed', 'hyperbolic'), help: 'Real refractive index used wherever the "custom" material is selected (non-dispersive).', bus: 'prop.n_refr' },
     { key: 'k_user', label: 'Custom material k', unit: '–', value: 0, min: 0, max: 10, group: 'Custom material', showIf: M('multilayer', 'mie', 'effmed', 'hyperbolic'), help: 'Extinction coefficient of the custom material (0 for lossless).' },
     { key: 'medium', label: 'Negative-ε medium', type: 'select', value: 'wire', group: 'Negative permittivity', showIf: M('neg_eps'), help: 'Pendry thin-wire lattice (microwave plasma) or a Drude metal with typical fitted parameters.', options: [{ value: 'wire', label: 'Thin-wire medium (Pendry)' }, { value: 'Ag', label: 'Silver (Drude)' }, { value: 'Au', label: 'Gold (Drude)' }, { value: 'Al', label: 'Aluminium (Drude)' }, { value: 'ITO', label: 'Indium tin oxide (Drude)' }] },
+    { key: 'wire_model', label: 'Wire-lattice formula', type: 'select', value: 'lattice', group: 'Negative permittivity', showIf: { mode: ['neg_eps'], medium: ['wire'] }, help: 'Dynamic lattice sum: valid from thin to thick wires (r/a up to about 0.2). Quasi-static formula ln(a/2πr) + 0.5275: thin wires. Pendry: original logarithmic estimate, 5–30 % low unless r/a is extremely small.', options: [{ value: 'lattice', label: 'Dynamic lattice sum (thin and thick wires)' }, { value: 'belov', label: 'Quasi-static lattice sum (Belov–Maslovski–Tretyakov)' }, { value: 'pendry', label: 'Pendry thin-wire formula' }] },
     { key: 'wire_r', label: 'Wire radius', unit: 'µm', value: 1, min: 0.01, max: 2000, log: true, group: 'Negative permittivity', showIf: M('neg_eps'), help: 'Radius of the wires. The plasma frequency depends on it only logarithmically, the loss inversely with its square.' },
     { key: 'wire_a', label: 'Wire lattice period', unit: 'mm', value: 5, min: 0.001, max: 100, log: true, group: 'Negative permittivity', showIf: M('neg_eps'), help: 'Spacing of the wire lattice; the plasma frequency scales nearly as 1/a.' },
     { key: 'metal_sigma', label: 'Metal conductivity', unit: 'S/m', value: 3.7e7, min: 1e4, max: 7e7, log: true, group: 'Metamaterial metal', showIf: M('neg_eps', 'neg_mu'), bus: 'prop.sigma_elec', help: 'DC conductivity of the wires or rings (3.7×10⁷ aluminium, 5.8×10⁷ copper); it sets the damping.' },
     { key: 'f_rel', label: 'Probe frequency (relative)', unit: '–', value: 0.6, min: 0.05, max: 3, group: 'Metamaterial metal', showIf: M('neg_eps', 'neg_mu'), help: 'Frequency for single-point results as a multiple of the ENZ frequency (negative ε) or of the ring resonance (negative µ; try 1.05).' },
-    { key: 'srr_r', label: 'Ring radius', unit: 'mm', value: 2, min: 0.0005, max: 50, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'Inner radius of the split-ring pair; the resonance frequency scales as r^(−3/2).' },
-    { key: 'srr_a', label: 'Lattice period', unit: 'mm', value: 5, min: 0.001, max: 200, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'In-plane lattice constant; with the ring radius it gives the filling factor πr²/a².' },
-    { key: 'srr_c', label: 'Ring width', unit: 'mm', value: 1, min: 0.0001, max: 20, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'Radial width of each ring; enters the inter-ring capacitance and the resistance.' },
-    { key: 'srr_d', label: 'Gap between rings', unit: 'mm', value: 0.1, min: 0.00001, max: 5, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'Radial gap between the two concentric rings; a smaller gap raises capacitance and lowers the resonance.' },
-    { key: 'srr_l', label: 'Stacking distance', unit: 'mm', value: 2, min: 0.0005, max: 50, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'Distance between ring planes along the axis.' },
+    { key: 'srr_type', label: 'Ring model', type: 'select', value: 'planar', group: 'Negative permeability', showIf: M('neg_mu'), help: 'Planar: printed (edge-coupled) double split rings on a circuit board, treated as an LC circuit with the flat-ring inductance and the coplanar-strip capacitance between the rings. Cylinder: Pendry\'s formula for split cylinders or rings stacked much closer than their radius; for isolated printed rings it overestimates the resonance several-fold.', options: [{ value: 'planar', label: 'Planar printed rings (quasi-static LC model)' }, { value: 'cylinder', label: 'Split cylinders / densely stacked rings (Pendry formula)' }] },
+    { key: 'srr_epsr', label: 'Substrate relative permittivity', unit: '–', value: 4.4, min: 1, max: 20, group: 'Negative permeability', showIf: { mode: ['neg_mu'], srr_type: ['planar'] }, help: 'Permittivity of the board carrying the rings (about 4.4 for FR-4/G-10, 2.2 for PTFE laminates, 1 for free-standing rings). It raises the inter-ring capacitance and lowers the resonance.' },
+    { key: 'srr_h', label: 'Substrate thickness', unit: 'mm', value: 0.25, min: 0.001, max: 20, log: true, group: 'Negative permeability', showIf: { mode: ['neg_mu'], srr_type: ['planar'] }, help: 'Thickness of the board. A board thinner than the ring width loads the gap only partly; a thick board gives the half-space value (ε_r + 1)/2.' },
+    { key: 'srr_r', label: 'Ring radius', unit: 'mm', value: 1.5, min: 0.0005, max: 50, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'Inner radius of the split-ring pair; the resonance frequency scales as r^(−3/2).' },
+    { key: 'srr_a', label: 'Lattice period', unit: 'mm', value: 8, min: 0.001, max: 200, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'In-plane lattice constant; with the ring size it gives the strength (filling factor) of the magnetic resonance; it must exceed the outer ring diameter 2(r + 2c + d) for planar rings.' },
+    { key: 'srr_c', label: 'Ring width', unit: 'mm', value: 0.8, min: 0.0001, max: 20, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'Radial width of each ring; enters the inter-ring capacitance and the resistance.' },
+    { key: 'srr_d', label: 'Gap between rings', unit: 'mm', value: 0.2, min: 0.00001, max: 5, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'Radial gap between the two concentric rings; a smaller gap raises capacitance and lowers the resonance.' },
+    { key: 'srr_l', label: 'Stacking distance', unit: 'mm', value: 8, min: 0.0005, max: 50, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'Distance between ring planes along the axis. The planar model treats the rings as magnetically independent (spacing of the order of the ring radius or more); the cylinder formula needs spacing much smaller than the radius.' },
     { key: 'srr_t', label: 'Metal thickness', unit: 'µm', value: 35, min: 0.01, max: 500, log: true, group: 'Negative permeability', showIf: M('neg_mu'), help: 'Thickness of the ring metallisation; only about one skin depth is effective.' },
     { key: 'fep', label: 'Electric plasma frequency', unit: 'GHz', value: 12.8, min: 0.1, max: 1000, log: true, group: 'Negative index', showIf: M('nim'), help: 'Plasma frequency of the wire (ε) sub-lattice; must exceed the magnetic resonance for a double-negative band.' },
     { key: 'ge', label: 'Electric damping γ_e/2π', unit: 'GHz', value: 0.1, min: 0.0001, max: 100, log: true, group: 'Negative index', showIf: M('nim'), help: 'Collision frequency of the wire medium.' },
@@ -685,7 +760,8 @@ export default {
     { name: 'Gold nanoparticles (40 nm) in water', note: 'Localised surface plasmon resonance near 520–530 nm; classic colloidal gold.', values: { mode: 'mie', mat_p: 'Au', d_p: 40, n_med: 1.33, lam_min: 400, lam_max: 900, AR_p: 3 } },
     { name: 'Silver nanoparticles (30 nm) in air', note: 'Sharp dipolar plasmon near 360 nm; strong field enhancement.', values: { mode: 'mie', mat_p: 'Ag', d_p: 30, n_med: 1.0, lam_min: 300, lam_max: 700, AR_p: 2.5 } },
     { name: 'Wire + split-ring negative-index metamaterial (X-band)', note: 'Double-negative band between the ring resonance at 10 GHz and its magnetic plasma frequency.', values: { mode: 'nim', fep: 12.8, ge: 0.1, f0m: 10, Fm: 0.3, gm: 0.05, d_slab: 10, f_probe: 11, theta: 30 } },
-    { name: 'Pendry split-ring medium (13.5 GHz)', note: 'Reference geometry: r = 2 mm, c = 1 mm, d = 0.1 mm, l = 2 mm, a = 5 mm.', values: { mode: 'neg_mu', srr_r: 2, srr_a: 5, srr_c: 1, srr_d: 0.1, srr_l: 2, srr_t: 35, metal_sigma: 5.8e7, f_rel: 1.05 } },
+    { name: 'Pendry split-ring medium (13.5 GHz)', note: 'Reference geometry of the densely stacked ring model: r = 2 mm, c = 1 mm, d = 0.1 mm, l = 2 mm, a = 5 mm.', values: { mode: 'neg_mu', srr_type: 'cylinder', srr_r: 2, srr_a: 5, srr_c: 1, srr_d: 0.1, srr_l: 2, srr_t: 35, metal_sigma: 5.8e7, f_rel: 1.05 } },
+    { name: 'Printed copper split rings (Smith et al. 2000, 4.8 GHz)', note: 'Planar double split rings r = 1.5 mm, c = 0.8 mm, d = 0.2 mm on an 8 mm lattice; measured resonance 4.845 GHz. Board assumed FR-4 type, 0.25 mm.', values: { mode: 'neg_mu', srr_type: 'planar', srr_r: 1.5, srr_a: 8, srr_c: 0.8, srr_d: 0.2, srr_l: 8, srr_t: 35, srr_epsr: 4.4, srr_h: 0.25, metal_sigma: 5.8e7, f_rel: 1.02 } },
     { name: 'Thin aluminium wire plasma (8.2 GHz)', note: 'Pendry wire medium: 1 µm wires on a 5 mm lattice give a gigahertz plasma frequency.', values: { mode: 'neg_eps', medium: 'wire', wire_r: 1, wire_a: 5, metal_sigma: 3.7e7, f_rel: 0.6 } },
     { name: 'Ag/TiO₂ hyperbolic multilayer', note: 'Type II hyperbolic and epsilon-near-zero behaviour in the visible.', values: { mode: 'hyperbolic', mat_i: 'Ag', mat_d: 'TiO2', fill: 0.3, period: 20, lam0: 750, lam_min: 350, lam_max: 900 } },
     { name: 'TiO₂ visible metalens, NA 0.45', note: 'Hyperbolic phase profile sampled by 300 nm unit cells.', values: { mode: 'metasurface', ms_kind: 'lens', lam0: 532, ms_p: 300, lens_D: 100, lens_f: 100, n_pillar: 2.4, dlam: 10 } },

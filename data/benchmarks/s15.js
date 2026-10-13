@@ -277,4 +277,25 @@ export default [
     inputs: { mode: 'nanobeam', matA: 'steel', matB: 'water' }, kpi: 'T_ac', expected: 4 * zS * zW / (zS + zW) ** 2, tol: 1e-6, kind: 'analytical',
     reference: 'Kinsler, Frey, Coppens & Sanders, Fundamentals of Acoustics — normal-incidence transmission between two media (steel 7850 kg/m³, 5900 m/s; water 998 kg/m³, 1482 m/s)',
   },
+  // ---- published experiments ----
+  {
+    id: 's15-exp-copper-polycrystal-e', suite: 15, title: 'Copper: measured polycrystal Young\'s modulus against the Hill average of the crystal constants', mode: 'christoffel',
+    inputs: { mode: 'christoffel', xtal: 'Cu' }, kpi: 'E', expected: 123.5e9, tol: 0.05, kind: 'experiment',
+    measured: { value: 123.5, uncertainty: 0.7, unit: 'GPa' },
+    source: { authors: 'Ledbetter, H. M. & Naimon, E. R.', title: 'Elastic properties of metals and alloys. II. Copper', journal: 'J. Phys. Chem. Ref. Data', year: 1974, doi: '10.1063/1.3253150', url: 'https://srd.nist.gov/jpcrdreprint/1.3253150.pdf' },
+    conditions: 'Annealed polycrystalline copper at room temperature; mean of the published static and dynamic measurements compiled in the source (outliers beyond 1.5 σ excluded), uncertainty is the standard error of the mean',
+    match: ['xtal'],
+    reference: 'Ledbetter & Naimon, J. Phys. Chem. Ref. Data 3, 897 (1974)',
+    note: 'Measured polycrystal value from table 10 (E = 1.235 ± 0.007 × 10¹¹ N/m²). The suite computes the modulus from its built-in single-crystal constants of copper (168.4, 121.4, 75.4 GPa; the source recommends 169.1, 122.2, 75.42 GPa). The source reports that the arithmetic Voigt–Reuss–Hill average overestimates the measured polycrystal modulus of this strongly anisotropic metal by about 3 %, which the tolerance reflects.'
+  },
+  {
+    id: 's15-exp-copper-polycrystal-g', suite: 15, title: 'Copper: measured polycrystal shear modulus against the Hill average of the crystal constants', mode: 'christoffel',
+    inputs: { mode: 'christoffel', xtal: 'Cu' }, kpi: 'G', expected: 45.4e9, tol: 0.07, kind: 'experiment',
+    measured: { value: 45.4, uncertainty: 1.2, unit: 'GPa' },
+    source: { authors: 'Ledbetter, H. M. & Naimon, E. R.', title: 'Elastic properties of metals and alloys. II. Copper', journal: 'J. Phys. Chem. Ref. Data', year: 1974, doi: '10.1063/1.3253150', url: 'https://srd.nist.gov/jpcrdreprint/1.3253150.pdf' },
+    conditions: 'Annealed polycrystalline copper at room temperature; mean of the published torsional and ultrasonic measurements compiled in the source, uncertainty is the standard error of the mean',
+    match: ['xtal'],
+    reference: 'Ledbetter & Naimon, J. Phys. Chem. Ref. Data 3, 897 (1974)',
+    note: 'Measured polycrystal value from table 10 (G = 0.454 ± 0.012 × 10¹¹ N/m²). The suite uses its built-in single-crystal constants of copper. The source gives 47.3 GPa for the arithmetic Voigt–Reuss–Hill average and notes that it lies above the observed shear modulus; the tolerance is the 2.6 % standard error of the measurement plus that 4 % averaging bias.'
+  },
 ];

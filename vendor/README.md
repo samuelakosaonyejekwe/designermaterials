@@ -64,3 +64,10 @@ described under "Modifications" (the anchors are the function names given there;
 `new Function` nor `eval(` remains), update the versions and byte counts in this file and in the `KERNELS` table of
 `js/geometry/kernels.js`, and run `node tests/run.mjs` — `tests/kernels.test.mjs` checks the byte counts, the absence of
 dynamic code generation and the analytic volumes.
+
+## fzstd
+
+- Package: `fzstd` 0.1.1 (pure JavaScript Zstandard decompressor), unmodified ES-module build `esm/index.mjs`.
+- Licence: MIT (see `fzstd/LICENSE`).
+- Upstream: https://github.com/101arrowz/fzstd
+- Used for: Zstandard-compressed entries in recent Autodesk Fusion archives.

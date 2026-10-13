@@ -225,4 +225,45 @@ export default [
     inputs: { mode: 'nano', T: 25, S }, kpi: 'dmu', expected: KB * Tn * Math.log(S) / QE, tol: 1e-4, kind: 'analytical',
     reference: 'Δμ = k_BT ln S with CODATA constants (k_BT = 25.69 meV at 298.15 K)'
   },
+  // ------------------------------------------------------------------ published reference measurements (NIST Chemistry WebBook)
+  {
+    id: 's06-exp-water-psat-150C', suite: 6, title: 'Water saturation pressure at 150 °C (NIST WebBook, IAPWS-95)', mode: 'vapour',
+    inputs: { mode: 'vapour', solvent: 'water', T: 150 }, kpi: 'Psat', expected: 0.47616, tol: 0.015, kind: 'experiment',
+    measured: { value: 0.47616, uncertainty: 0.00012, unit: 'MPa' },
+    source: { authors: 'Wagner, W.; Pruss, A.', title: 'The IAPWS Formulation 1995 for the Thermodynamic Properties of Ordinary Water Substance for General and Scientific Use', journal: 'J. Phys. Chem. Ref. Data', year: 2002, doi: '10.1063/1.1461829', url: 'https://webbook.nist.gov/chemistry/fluid/' },
+    conditions: 'Pure water on the liquid–vapour saturation line at 150 °C',
+    match: ['solvent', 'T'],
+    reference: 'Wagner & Pruss, J. Phys. Chem. Ref. Data 31, 387–535 (2002), as served by the NIST Chemistry WebBook (Thermophysical Properties of Fluid Systems)',
+    note: 'Saturation-properties table of the NIST Chemistry WebBook fluid database (temperature increments, 150.00 °C: 0.47616 MPa). This is critically evaluated reference data: an equation of state fitted to the body of vapour-pressure measurements, with a stated uncertainty of 0.025 % in vapour pressure. The suite uses a two-range Antoine correlation; the tolerance is its documented accuracy.'
+  },
+  {
+    id: 's06-exp-water-psat-250C', suite: 6, title: 'Water saturation pressure at 250 °C (NIST WebBook, IAPWS-95)', mode: 'vapour',
+    inputs: { mode: 'vapour', solvent: 'water', T: 250 }, kpi: 'Psat', expected: 3.9762, tol: 0.015, kind: 'experiment',
+    measured: { value: 3.9762, uncertainty: 0.001, unit: 'MPa' },
+    source: { authors: 'Wagner, W.; Pruss, A.', title: 'The IAPWS Formulation 1995 for the Thermodynamic Properties of Ordinary Water Substance for General and Scientific Use', journal: 'J. Phys. Chem. Ref. Data', year: 2002, doi: '10.1063/1.1461829', url: 'https://webbook.nist.gov/chemistry/fluid/' },
+    conditions: 'Pure water on the liquid–vapour saturation line at 250 °C (typical upper range of hydrothermal autoclaves)',
+    match: ['solvent', 'T'],
+    reference: 'Wagner & Pruss, J. Phys. Chem. Ref. Data 31, 387–535 (2002), as served by the NIST Chemistry WebBook (Thermophysical Properties of Fluid Systems)',
+    note: 'Saturation-properties table of the NIST Chemistry WebBook fluid database (250.00 °C: 3.9762 MPa); critically evaluated reference data with a stated vapour-pressure uncertainty of 0.025 %. The Antoine correlation of the suite is about 0.8 % high here.'
+  },
+  {
+    id: 's06-exp-methanol-psat-150C', suite: 6, title: 'Methanol saturation pressure at 150 °C (NIST WebBook)', mode: 'vapour',
+    inputs: { mode: 'vapour', solvent: 'methanol', T: 150 }, kpi: 'Psat', expected: 1.3933, tol: 0.015, kind: 'experiment',
+    measured: { value: 1.3933, uncertainty: null, unit: 'MPa' },
+    source: { authors: 'de Reuck, K. M.; Craven, R. J. B.', title: 'Methanol, International Thermodynamic Tables of the Fluid State – 12', journal: 'IUPAC, Blackwell Scientific Publications, London', year: 1993, doi: null, url: 'https://webbook.nist.gov/chemistry/fluid/' },
+    conditions: 'Pure methanol on the liquid–vapour saturation line at 150 °C (solvothermal conditions)',
+    match: ['solvent', 'T'],
+    reference: 'de Reuck & Craven, International Thermodynamic Tables of the Fluid State – 12: Methanol (IUPAC, 1993), as served by the NIST Chemistry WebBook',
+    note: 'Saturation-properties table of the NIST Chemistry WebBook fluid database (150.00 °C: 1.3933 MPa); critically evaluated reference data from an equation of state fitted to measurements. The WebBook states the equation-of-state uncertainty as generally 0.1 % in density and gives no separate figure for vapour pressure.'
+  },
+  {
+    id: 's06-exp-toluene-psat-150C', suite: 6, title: 'Toluene saturation pressure at 150 °C (NIST WebBook)', mode: 'vapour',
+    inputs: { mode: 'vapour', solvent: 'toluene', T: 150 }, kpi: 'Psat', expected: 0.27536, tol: 0.015, kind: 'experiment',
+    measured: { value: 0.27536, uncertainty: 0.00014, unit: 'MPa' },
+    source: { authors: 'Lemmon, E. W.; Span, R.', title: 'Short Fundamental Equations of State for 20 Industrial Fluids', journal: 'J. Chem. Eng. Data', year: 2006, doi: '10.1021/je050186n', url: 'https://webbook.nist.gov/chemistry/fluid/' },
+    conditions: 'Pure toluene on the liquid–vapour saturation line at 150 °C',
+    match: ['solvent', 'T'],
+    reference: 'Lemmon & Span, J. Chem. Eng. Data 51, 785–850 (2006), as served by the NIST Chemistry WebBook (Thermophysical Properties of Fluid Systems)',
+    note: 'Saturation-properties table of the NIST Chemistry WebBook fluid database (150.00 °C: 0.27536 MPa); critically evaluated reference data with a stated vapour-pressure uncertainty of 0.05 % between 305 and 425 K.'
+  },
 ];

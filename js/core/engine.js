@@ -41,6 +41,8 @@ export function validateInputs(suite, values) {
 // Eight qualification gates. Only evidence the platform can actually observe is scored automatically; gates that need
 // experimental evidence stay open until the user records it in Suite 24.
 export const benchStatus = {};
+// Nearest published experiment for the current inputs of each suite: { inputs: JSON, title, source, distance, ok, dev }
+export const expStatus = {};
 export function assessGates(suite, values, result, origin) {
   const checks = result.checks || [], failed = checks.filter(c => !c.pass), assumed = Object.values(origin || {}).filter(o => o === 'default').length, total = Object.keys(origin || {}).length || 1;
   const cred = project.bus, g = [];
@@ -52,7 +54,8 @@ export function assessGates(suite, values, result, origin) {
   g.push({ id: 4, name: 'Solution verification', status: gci ? (gci.value < 0.05 ? 'pass' : 'partial') : (result.numerics && result.numerics.residual !== undefined ? 'partial' : 'open'), detail: gci ? `Grid-convergence index ${(gci.value * 100).toFixed(2)} % recorded in Suite 24.` : 'Solver residuals are reported, but no mesh / time-step convergence study has been recorded for this case.' });
   const rec = project.runs[suite.id] || {}, cal = rec.calibration, val = rec.validation && rec.validation.inputs === JSON.stringify(values) ? rec.validation : null;
   g.push({ id: 5, name: 'Parameter calibration', status: cal || cred['cred.calibrated'] || cred['cred.cal_rmse'] ? 'pass' : 'open', detail: cal ? `“${cal.inputLabel}” was fitted to ${cal.value} so that “${cal.kpiLabel}” reproduces your measured ${cal.measured} (${new Date(cal.at).toLocaleDateString()}).` : (cred['cred.calibrated'] || cred['cred.cal_rmse']) ? 'Calibrated parameters recorded in Suite 24.' : 'Model parameters are handbook / literature-typical values, not calibrated to your measurements. Use “Calibrate to a measurement” below.' });
-  g.push({ id: 6, name: 'Independent experimental validation', status: val ? (val.passed === val.n ? 'pass' : 'fail') : cred['cred.rmse'] ? 'partial' : 'open', detail: val ? `${val.passed} of ${val.n} predicted quantities agree with your measurements within the stated acceptance (${val.acceptance} % or 2 × measurement uncertainty), recorded ${new Date(val.at).toLocaleDateString()} for exactly these inputs.` : cred['cred.rmse'] ? `Validation error recorded in Suite 24 (RMSE ${Number(cred['cred.rmse'].value).toPrecision(3)}). Check it covers this operating range.` : 'No measurements have been compared with this prediction yet. Use “Validate with my measurements” below.' });
+  const lit = expStatus[suite.id] && expStatus[suite.id].inputs === JSON.stringify(values) && expStatus[suite.id].ok && expStatus[suite.id].distance <= 0.15 ? expStatus[suite.id] : null;
+  g.push({ id: 6, name: 'Independent experimental validation', status: val ? (val.passed === val.n ? 'pass' : 'fail') : lit ? 'pass' : cred['cred.rmse'] ? 'partial' : 'open', detail: val ? `${val.passed} of ${val.n} predicted quantities agree with your measurements within the stated acceptance (${val.acceptance} % or 2 × measurement uncertainty), recorded ${new Date(val.at).toLocaleDateString()} for exactly these inputs.` : lit ? `This case lies within ${(lit.distance * 100).toFixed(0)} % of a published experiment that the solver reproduces to ${(lit.dev * 100).toFixed(1)} %: ${lit.title} (${lit.source}). Your own measurements would strengthen this further.` : cred['cred.rmse'] ? `Validation error recorded in Suite 24 (RMSE ${Number(cred['cred.rmse'].value).toPrecision(3)}). Check it covers this operating range.` : 'No measurements have been compared with this prediction yet. Use “Validate with my measurements” below.' });
   g.push({ id: 7, name: 'Predictive robustness', status: project.runs[suite.id]?.sensitivity ? 'partial' : 'open', detail: project.runs[suite.id]?.sensitivity ? 'A sensitivity / uncertainty study has been run for this suite.' : 'Run the sensitivity and uncertainty tabs to see how input scatter moves the result.' });
   g.push({ id: 8, name: 'Application-specific qualification', status: 'open', detail: 'Requires documented review for the intended engineering use; never granted automatically.' });
   let level = 'Theoretical prediction — not verified';
@@ -60,6 +63,7 @@ export function assessGates(suite, values, result, origin) {
   if (g[1].status === 'pass' && g[3].status !== 'open') level = 'Numerically checked for this case';
   if (g[1].status === 'pass' && g[4].status === 'pass') level = 'Calibrated against identified datasets';
   if (g[1].status === 'pass' && g[4].status === 'pass' && g[5].status !== 'open') level = 'Compared with independent measurements';
+  if (lit && g[1].status === 'pass') level = `Validated against a published experiment near this operating point (${lit.source})`;
   if (val && val.passed === val.n && g[1].status === 'pass') level = `Experimentally validated at this operating point (${val.n} measured ${val.n === 1 ? 'quantity' : 'quantities'})`;
   if (val && val.passed < val.n) level = 'Disagrees with your measurements — calibrate or revise the model';
   if (g[1].status === 'fail') level = 'Review needed — a physical or validity check failed';

@@ -208,4 +208,25 @@ export default [
     inputs: { mode: 'nano', crystal: 'graphene', nshape: 'tube', tn: 10, tm: 10, Lnm: 5e-9 }, kpi: 'ssa', expected: 2.63e6, tol: 0.01, kind: 'reference-data',
     reference: 'A single-wall nanotube is a rolled graphene sheet: 2630 m²/g counting both wall faces (1315 m²/g for the outer face alone)',
   },
+  // ------------------------------------------------------------------ published experiments
+  {
+    id: 's03-exp-argon-lattice-constant-0k', suite: 3, title: 'Solid argon: measured X-ray lattice constant extrapolated to 0 K against the Lennard-Jones crystal with zero-point motion', mode: 'potential',
+    inputs: { mode: 'potential', potModel: 'pair', pot: 'Ar', lattice: 'fcc' }, kpi: 'a0_zp', expected: 5.30017 * 1.00202, tol: 0.005, kind: 'experiment',
+    measured: { value: 5.30017, uncertainty: 0.00008, unit: 'kxu' },
+    source: { authors: 'Peterson, Batchelder, Simmons', title: 'Measurements of X-Ray Lattice Constant, Thermal Expansivity, and Isothermal Compressibility of Argon Crystals', journal: 'Phys. Rev.', year: 1966, doi: '10.1103/PhysRev.150.703', url: 'https://doi.org/10.1103/PhysRev.150.703' },
+    conditions: 'Argon crystals of 99.998 % purity grown by directional solidification; rotating-camera X-ray method between 2.3 and 83.2 K, lattice constant extrapolated to 0 K',
+    match: ['pot', 'potModel', 'lattice'],
+    reference: 'Peterson, Batchelder & Simmons, Phys. Rev. 150, 703 (1966)',
+    note: 'Value stated in the abstract in kX units; converted with 1 kxu = 1.00202 Å (5.3109 Å). The suite minimises the 12-6 lattice energy (gas-phase argon parameters ε = 0.0104 eV, σ = 3.405 Å) plus the quasi-harmonic zero-point energy (9/8)k_BΘ_D, with Θ_D from the lattice-sum Einstein frequency and no adjustable constant: 5.315 Å, +0.1 %. The static lattice alone gives 5.250 Å (−1.2 %), so the earlier shortfall was the missing quantum expansion. The tolerance covers the Debye-spectrum approximation and the pair-potential parameters.'
+  },
+  {
+    id: 's03-exp-argon-bulk-modulus-4k', suite: 3, title: 'Solid argon: measured isothermal compressibility at 4.25 K against the Lennard-Jones crystal with zero-point motion', mode: 'potential',
+    inputs: { mode: 'potential', potModel: 'pair', pot: 'Ar', lattice: 'fcc' }, kpi: 'B0_zp', expected: 1 / 3.75e-10 / 1e9, tol: 0.05, kind: 'experiment',
+    measured: { value: 3.75e-11, uncertainty: null, unit: 'cm²/dyn (isothermal compressibility)' },
+    source: { authors: 'Peterson, Batchelder, Simmons', title: 'Measurements of X-Ray Lattice Constant, Thermal Expansivity, and Isothermal Compressibility of Argon Crystals', journal: 'Phys. Rev.', year: 1966, doi: '10.1103/PhysRev.150.703', url: 'https://doi.org/10.1103/PhysRev.150.703' },
+    conditions: 'Argon crystals of 99.998 % purity; isothermal compressibility from the X-ray lattice constant of crystals under pressure, value at 4.25 K',
+    match: ['pot', 'potModel', 'lattice'],
+    reference: 'Peterson, Batchelder & Simmons, Phys. Rev. 150, 703 (1966)',
+    note: 'Compressibility 3.75×10⁻¹¹ cm²/dyn from the abstract, i.e. B = 2.67 GPa. With the zero-point term the model gives 2.66 GPa (−0.2 %); the static pair model gives 3.18 GPa (+19 %). The difference is therefore the quantum correction (lattice expansion of 1.2 % acting on a potential with B′ ≈ 8, plus the volume dependence of the zero-point energy), not a limitation of the pair potential itself. No uncertainty is quoted in the abstract; the 5 % tolerance covers the Debye-spectrum approximation of the zero-point energy and the neglect of three-body (Axilrod–Teller) forces. The model Debye temperature (79 K) is 14 % below the calorimetric 92 K, which bounds the accuracy of the correction.'
+  },
 ];

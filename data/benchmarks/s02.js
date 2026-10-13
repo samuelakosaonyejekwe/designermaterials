@@ -193,4 +193,15 @@ export default [
     inputs: { mode: 'props', matId: 'silicon' }, kpi: 'cbar', expected: Math.sqrt(160e9 / 2329), tol: 0.03, kind: 'reference-data',
     reference: 'c = √(E/ρ) with the polycrystalline-average modulus of silicon (160 GPa) and its density 2329 kg/m³',
   },
+  // ------------------------------------------------------------------ published experiments
+  {
+    id: 's02-exp-sige-lattice-parameter-x05', suite: 2, title: 'Si₀.₅Ge₀.₅ alloy: measured lattice parameter against Vegard’s law', mode: 'doping',
+    inputs: { mode: 'doping', hostF: 'Si', hostSite: 'Si', dopant: 'Ge', dopConc: 50, dopUnit: 'site', hostVal: 4, dopVal: 4, hostRho: 2329, aHost: 5.431, aEnd: 5.658 }, kpi: 'a', expected: 5.431 + 0.20 * 0.5 + 0.027 * 0.25, tol: 0.003, kind: 'experiment',
+    measured: { value: 5.5378, uncertainty: null, unit: 'Å' },
+    source: { authors: 'Dismukes, Ekstrom, Paff', title: 'Lattice Parameter and Density in Germanium-Silicon Alloys', journal: 'J. Phys. Chem.', year: 1964, doi: '10.1021/j100792a049', url: 'http://www.ioffe.ru/SVA/NSM/Semicond/SiGe/basic.html' },
+    conditions: 'Si₁₋ₓGeₓ alloy at 300 K, composition x = 0.5; lattice constant from the composition fit to the measured alloy series',
+    match: ['hostF', 'dopant', 'dopConc'],
+    reference: 'Dismukes, Ekstrom & Paff, J. Phys. Chem. 68, 3021 (1964), as tabulated in the Ioffe Institute NSM Archive (SiGe, basic parameters)',
+    note: 'The retrieved Ioffe NSM Archive page gives the fit to the measurements of Dismukes et al., a(x) = 5.431 + 0.20x + 0.027x² Å at 300 K; the value is that fit evaluated at x = 0.5, not a single tabulated sample. The end-member parameters entered are the x = 0 and x = 1 values of the same fit. Vegard’s straight line lies 0.12 % above the measured curve (the known small negative bowing); tolerance 0.3 %.'
+  },
 ];

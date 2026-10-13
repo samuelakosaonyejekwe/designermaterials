@@ -111,6 +111,8 @@ export function zipStore(files) {
   return w.out();
 }
 // ZIP reader: central directory, stored (0) and DEFLATE (8) entries. `only` (RegExp) limits which entries are inflated.
+// Optional decoders registered on demand (e.g. Zstandard for recent Fusion archives).
+export const codecs = {};
 export function unzip(bytes, only) {
   const b = toBytes(bytes), v = view(b); let e = -1;
   for (let i = b.length - 22; i >= max(0, b.length - 66000); i--) if (v.getUint32(i, true) === 0x06054b50) { e = i; break; }
@@ -123,7 +125,7 @@ export function unzip(bytes, only) {
     const name = toText(b.subarray(p + 46, p + 46 + nl)), entry = { name, size: usize, method, data: null };
     if (!only || only.test(name)) {
       const ds = lo + 30 + v.getUint16(lo + 26, true) + v.getUint16(lo + 28, true);
-      if (method === 0) entry.data = b.subarray(ds, ds + csize); else if (method === 8) entry.data = inflateRaw(b, ds, usize || 0).data; else entry.error = `compression method ${method} not supported`;
+      if (method === 0) entry.data = b.subarray(ds, ds + csize); else if (method === 8) entry.data = inflateRaw(b, ds, usize || 0).data; else if (method === 93 && codecs.zstd) { try { entry.data = codecs.zstd(b.subarray(ds, ds + csize)); } catch (err) { entry.error = 'Zstandard stream could not be decoded: ' + err.message; } } else entry.error = `compression method ${method} not supported`;
     }
     out.push(entry); p += 46 + nl + xl + cl;
   }

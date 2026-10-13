@@ -88,7 +88,7 @@ for (let id = 1; id <= 29; id++) {
 }
 
 // optional module self-tests
-for (const f of ['tests/atomic.test.mjs', 'tests/geometry.test.mjs', 'tests/kernels.test.mjs', 'tests/xt.test.mjs', 'tests/data.test.mjs', 'tests/environments.test.mjs']) {
+for (const f of ['tests/atomic.test.mjs', 'tests/geometry.test.mjs', 'tests/kernels.test.mjs', 'tests/xt.test.mjs', 'tests/sat.test.mjs', 'tests/data.test.mjs', 'tests/environments.test.mjs']) {
   if (only.length || !fs.existsSync(path.join(root, f))) continue;
   console.log('\n' + f);
   try { const m = await import(pathToFileURL(path.join(root, f))); const r = await m.default(); pass += r.pass; fail += r.fail; for (const l of r.log || []) console.log('  ' + l); } catch (e) { bad(f, 'threw ' + e.stack); }

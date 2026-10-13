@@ -65,6 +65,9 @@ function block(a, b, cz) {
 const cylinder = (r, h) => ({ points: [], edges: [{ curve: [31, v([0, 0, 0]), v([0, 0, 1]), v([1, 0, 0]), f(r)] }, { curve: [31, v([0, 0, h]), v([0, 0, 1]), v([1, 0, 0]), f(r)] }],
   faces: [{ surface: [51, v([0, 0, 0]), v([0, 0, 1]), f(r), v([1, 0, 0])], loops: [[{ edge: 0, sense: '+' }], [{ edge: 1, sense: '-' }]] }, { surface: [50, v([0, 0, 0]), v([0, 0, -1]), v([1, 0, 0])], loops: [[{ edge: 0, sense: '-' }]] }, { surface: [50, v([0, 0, h]), v([0, 0, 1]), v([1, 0, 0])], loops: [[{ edge: 1, sense: '+' }]] }] });
 
+// fixture builders shared with the other container tests (sat.test.mjs)
+export const fixtures = { enc, cat, u32, stored, zlibStored, swFile, xtBinary, xtText, solid, block, cylinder };
+
 export default async function run() {
   const log = []; let pass = 0, fail = 0; const t00 = Date.now();
   const ok = (cond, msg) => { if (cond) pass++; else { fail++; log.push('✗ ' + msg); } };

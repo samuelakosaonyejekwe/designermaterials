@@ -1,5 +1,17 @@
 # Changes
 
+## 1.3.0
+- Published experiments: solvers are now compared with measured results from the literature (sources cited with DOI), and each suite's Credibility tab shows whether your case lies near a published experiment — independent evidence without measurements of your own.
+- Models corrected where experiments disagreed (results change):
+  - Suite 7: ZnO nanorod growth law redesigned around supersaturation at the buffered bath pH with competing bulk precipitation; calibrated on one paper and checked against three others (7–26 % low on the independent set; lengths level off near 1 µm as measured).
+  - Suite 12, 5: planar printed split-ring resonator model (4.66 GHz against 4.845 GHz measured for the classic geometry; the previous cylinder formula was ten times too high for printed rings); wire-medium formula valid for thicker wires.
+  - Suite 10: spectral phonon model for nanowires and thin films (70 nm silicon wire 27.6 against 28 W/m/K measured; previously 93).
+  - Suite 11: electrolyte conductivity with concentration correction (KCl within 1 %).
+  - Suite 18: particulate composites at high filler loading (differential scheme as default).
+  - Suite 3: zero-point correction for rare-gas solids. Suite 23: BET fitting window chosen by the Rouquerol criteria.
+- Geometry: ACIS, Autodesk and JT readers; all configurations of a SOLIDWORKS part; batch-export script generator for closed CAD systems.
+- The Internet Archive copy is brought up to date incrementally and verified by content digest on every scheduled run; the schedule keeps itself active.
+
 ## 1.2.1
 - Parasolid (.x_t, .x_b), SOLIDWORKS part and Siemens NX part geometry is now read: the Parasolid B-rep is translated to STEP and tessellated by the OpenCASCADE kernel.
 - A second live address on independent infrastructure (Internet Archive), refreshed automatically at every release together with the content-delivery copy and the source archive.

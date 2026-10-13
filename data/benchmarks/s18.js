@@ -49,13 +49,13 @@ export default [
   },
   {
     id: 's18-mori-tanaka-G', suite: 18, title: 'Mori–Tanaka shear modulus, soft spheres in a stiff matrix (Eshelby tensor form)', mode: 'bounds',
-    inputs: { mode: 'bounds', shape: 'sphere', vf: fSoft, E_m: 7e10, nu_m: 0.3, E_i: 2e9, nu_i: 0.4 }, kpi: 'G_eff',
+    inputs: { mode: 'bounds', shape: 'sphere', est: 'mt', vf: fSoft, E_m: 7e10, nu_m: 0.3, E_i: 2e9, nu_i: 0.4 }, kpi: 'G_eff',
     expected: mtG, tol: 1e-6, kind: 'analytical',
     reference: 'Benveniste, re-examination of the Mori–Tanaka method (Mech. Mater.); Eshelby spherical-inclusion factor β = 6(K + 2G)/(5(3K + 4G))'
   },
   {
     id: 's18-mori-tanaka-K', suite: 18, title: 'Mori–Tanaka bulk modulus, soft spheres in a stiff matrix (Eshelby tensor form)', mode: 'bounds',
-    inputs: { mode: 'bounds', shape: 'sphere', vf: fSoft, E_m: 7e10, nu_m: 0.3, E_i: 2e9, nu_i: 0.4 }, kpi: 'K_eff',
+    inputs: { mode: 'bounds', shape: 'sphere', est: 'mt', vf: fSoft, E_m: 7e10, nu_m: 0.3, E_i: 2e9, nu_i: 0.4 }, kpi: 'K_eff',
     expected: mtK, tol: 1e-6, kind: 'analytical',
     reference: 'Benveniste, re-examination of the Mori–Tanaka method (Mech. Mater.); Eshelby spherical-inclusion factor α = 3K/(3K + 4G)'
   },
@@ -94,7 +94,7 @@ export default [
   },
   {
     id: 's18-kerner-cte', suite: 18, title: 'Thermal expansion of a particulate composite (Kerner = Levin with the Hashin–Shtrikman bulk modulus)', mode: 'bounds',
-    inputs: { mode: 'bounds', shape: 'sphere', vf: f, E_m: 3e9, nu_m: 0.35, E_i: 1.4e11, nu_i: 0.35, cte_m: 6e-5, cte_i: 4.3e-6 }, kpi: 'cte_eff',
+    inputs: { mode: 'bounds', shape: 'sphere', est: 'mt', vf: f, E_m: 3e9, nu_m: 0.35, E_i: 1.4e11, nu_i: 0.35, cte_m: 6e-5, cte_i: 4.3e-6 }, kpi: 'cte_eff',
     expected: kerner, tol: 1e-6, kind: 'analytical',
     reference: 'Kerner, elastic and thermo-elastic properties of composite media (Proc. Phys. Soc.); Levin relation; Schapery bounds'
   },
@@ -263,5 +263,106 @@ export default [
     expected: lj.rho, tol: 0.005, kind: 'analytical',
     reference: 'Ashcroft & Mermin, Solid State Physics — nearest-neighbour distance (2A₁₂/A₆)^(1/6) σ of the fcc Lennard-Jones crystal',
     note: 'Corresponds to a lattice parameter of about 5.25 Å (measured solid argon: about 5.3 Å including zero-point expansion).'
+  },
+  // ---- published experiments ----
+  {
+    id: 's18-exp-smith-glass-epoxy-e-015', suite: 18, title: 'Glass-bead/epoxy composite, 14.9 vol % filler: measured Young\'s modulus', mode: 'bounds',
+    inputs: { mode: 'bounds', E_m: 3.01e9, nu_m: 0.394, E_i: 7.6e10, nu_i: 0.23, shape: 'sphere', poros: 0, vf: 0.1494 }, kpi: 'E_eff', expected: 4.19e9, tol: 0.05, kind: 'experiment',
+    measured: { value: 4.19, uncertainty: 0.14, unit: 'GPa' },
+    source: { authors: 'Smith, J. C.', title: 'Experimental values for the elastic constants of a particulate-filled glassy polymer', journal: 'J. Res. Natl. Bur. Stand. A', year: 1976, doi: '10.6028/jres.080A.008', url: 'https://nvlpubs.nist.gov/nistpubs/jres/80A/jresv80An1p45_A1b.pdf' },
+    conditions: 'Glass spheres (1–30 µm, soda-lime crown glass, silane-coupled) in DGEBA/TETA epoxy; dumbbell tensile specimens at 0.05 cm/min, 24 °C, tested about 200 days after casting (stored at 54 % R.H.); mean of four specimens',
+    match: ['vf', 'E_m', 'E_i'],
+    reference: 'Smith, J. Res. Natl. Bur. Stand. 80A, 45 (1976)',
+    note: 'Measured value from table 2 (volume fraction 0.1494). Phase constants as given in the source: matrix E = 3.01 GPa and ν = 0.394 (section 5; the three unfilled castings of table 2 measured 2.99–3.03 GPa), glass E = 76 GPa (manufacturer, section 2) and ν = 0.23 (literature value quoted in section 2). Uncertainty is the probable error of a single observation. The suite default for spheres, the differential scheme, gives 4.14 GPa (−1.3 %); the tolerance is the specimen scatter (probable error 3 %) with a margin for the phase constants. Mori–Tanaka is 3 % low here.'
+  },
+  {
+    id: 's18-exp-smith-glass-epoxy-e-030', suite: 18, title: 'Glass-bead/epoxy composite, 30.3 vol % filler: measured Young\'s modulus', mode: 'bounds',
+    inputs: { mode: 'bounds', E_m: 3.01e9, nu_m: 0.394, E_i: 7.6e10, nu_i: 0.23, shape: 'sphere', poros: 0, vf: 0.3025 }, kpi: 'E_eff', expected: 6.01e9, tol: 0.05, kind: 'experiment',
+    measured: { value: 6.01, uncertainty: 0.21, unit: 'GPa' },
+    source: { authors: 'Smith, J. C.', title: 'Experimental values for the elastic constants of a particulate-filled glassy polymer', journal: 'J. Res. Natl. Bur. Stand. A', year: 1976, doi: '10.6028/jres.080A.008', url: 'https://nvlpubs.nist.gov/nistpubs/jres/80A/jresv80An1p45_A1b.pdf' },
+    conditions: 'Glass spheres (1–30 µm, soda-lime crown glass, silane-coupled) in DGEBA/TETA epoxy; dumbbell tensile specimens at 0.05 cm/min, 24 °C, tested about 200 days after casting (stored at 54 % R.H.); mean of four specimens',
+    match: ['vf', 'E_m', 'E_i'],
+    reference: 'Smith, J. Res. Natl. Bur. Stand. 80A, 45 (1976)',
+    note: 'Measured value from table 2 (volume fraction 0.3025). Phase constants as given in the source: matrix E = 3.01 GPa and ν = 0.394 (section 5; the three unfilled castings of table 2 measured 2.99–3.03 GPa), glass E = 76 GPa (manufacturer, section 2) and ν = 0.23 (literature value quoted in section 2). Uncertainty is the probable error of a single observation. The suite default for spheres, the differential scheme, gives 5.98 GPa (−0.5 %); the tolerance is the specimen scatter (probable error 3.5 %) with a margin for the phase constants. The source itself shows (figure 1) that the Hashin–Shtrikman lower bound, which the Mori–Tanaka estimate reproduces for spheres, falls increasingly below the data as the filler fraction rises (8 % here); that estimate was the suite default before and remains selectable.'
+  },
+  {
+    id: 's18-exp-smith-glass-epoxy-e-040', suite: 18, title: 'Glass-bead/epoxy composite, 39.6 vol % filler: measured Young\'s modulus', mode: 'bounds',
+    inputs: { mode: 'bounds', E_m: 3.01e9, nu_m: 0.394, E_i: 7.6e10, nu_i: 0.23, shape: 'sphere', poros: 0, vf: 0.396 }, kpi: 'E_eff', expected: 7.94e9, tol: 0.06, kind: 'experiment',
+    measured: { value: 7.94, uncertainty: 0.12, unit: 'GPa' },
+    source: { authors: 'Smith, J. C.', title: 'Experimental values for the elastic constants of a particulate-filled glassy polymer', journal: 'J. Res. Natl. Bur. Stand. A', year: 1976, doi: '10.6028/jres.080A.008', url: 'https://nvlpubs.nist.gov/nistpubs/jres/80A/jresv80An1p45_A1b.pdf' },
+    conditions: 'Glass spheres (1–30 µm, soda-lime crown glass, silane-coupled) in DGEBA/TETA epoxy; dumbbell tensile specimens at 0.05 cm/min, 24 °C, tested about 200 days after casting (stored at 54 % R.H.); mean of four specimens',
+    match: ['vf', 'E_m', 'E_i'],
+    reference: 'Smith, J. Res. Natl. Bur. Stand. 80A, 45 (1976)',
+    note: 'Measured value from table 2 (volume fraction 0.3960); phase constants as for the entries above. The differential scheme (suite default for spheres) gives 7.70 GPa (−3.0 %); the tolerance covers specimen scatter and the phase constants. For comparison at this loading: generalised self-consistent −7 %, Lielens +5 %, Mori–Tanaka −15 %, symmetric self-consistent +26 %.'
+  },
+  {
+    id: 's18-exp-smith-glass-epoxy-e-050', suite: 18, title: 'Glass-bead/epoxy composite, 49.6 vol % filler: measured Young\'s modulus', mode: 'bounds',
+    inputs: { mode: 'bounds', E_m: 3.01e9, nu_m: 0.394, E_i: 7.6e10, nu_i: 0.23, shape: 'sphere', poros: 0, vf: 0.496 }, kpi: 'E_eff', expected: 12.09e9, tol: 0.15, kind: 'experiment',
+    measured: { value: 12.09, uncertainty: 0.09, unit: 'GPa' },
+    source: { authors: 'Smith, J. C.', title: 'Experimental values for the elastic constants of a particulate-filled glassy polymer', journal: 'J. Res. Natl. Bur. Stand. A', year: 1976, doi: '10.6028/jres.080A.008', url: 'https://nvlpubs.nist.gov/nistpubs/jres/80A/jresv80An1p45_A1b.pdf' },
+    conditions: 'Glass spheres (1–30 µm, soda-lime crown glass, silane-coupled) in DGEBA/TETA epoxy; dumbbell tensile specimens at 0.05 cm/min, 24 °C, tested about 200 days after casting (stored at 54 % R.H.); mean of four specimens',
+    match: ['vf', 'E_m', 'E_i'],
+    reference: 'Smith, J. Res. Natl. Bur. Stand. 80A, 45 (1976)',
+    note: 'Measured value from table 2 (volume fraction 0.4960); phase constants as for the entries above. The differential scheme gives 10.36 GPa (−14.3 %): at this loading the aged composite is markedly stiffer than every matrix-continuous mean-field estimate (generalised self-consistent −20 %, Mori–Tanaka −30 %), which the suite states in a warning above 45 vol %; the tolerance is that documented model deviation, not measurement scatter. The freshly cast series of the same source at 49.8 vol % is reproduced within 5 % (next entries), so the discrepancy is specific to this point rather than systematic.'
+  },
+  {
+    id: 's18-exp-smith-glass-epoxy-e-050-lielens', suite: 18, title: 'Glass-bead/epoxy composite, 49.6 vol % filler: Lielens interpolation against the measured modulus', mode: 'bounds',
+    inputs: { mode: 'bounds', E_m: 3.01e9, nu_m: 0.394, E_i: 7.6e10, nu_i: 0.23, shape: 'sphere', est: 'lielens', poros: 0, vf: 0.496 }, kpi: 'E_eff', expected: 12.09e9, tol: 0.08, kind: 'experiment',
+    measured: { value: 12.09, uncertainty: 0.09, unit: 'GPa' },
+    source: { authors: 'Smith, J. C.', title: 'Experimental values for the elastic constants of a particulate-filled glassy polymer', journal: 'J. Res. Natl. Bur. Stand. A', year: 1976, doi: '10.6028/jres.080A.008', url: 'https://nvlpubs.nist.gov/nistpubs/jres/80A/jresv80An1p45_A1b.pdf' },
+    conditions: 'Glass spheres (1–30 µm, soda-lime crown glass, silane-coupled) in DGEBA/TETA epoxy; dumbbell tensile specimens at 0.05 cm/min, 24 °C, tested about 200 days after casting (stored at 54 % R.H.); mean of four specimens',
+    match: ['vf', 'E_m', 'E_i', 'est'],
+    reference: 'Smith, J. Res. Natl. Bur. Stand. 80A, 45 (1976)',
+    note: 'Same measurement as the previous entry, compared with the selectable Lielens interpolation (11.42 GPa, −5.6 %), the estimate the suite points to above 45 vol %. The interpolation weight (f + f²)/2 is the published one and was not adjusted.'
+  },
+  {
+    id: 's18-exp-smith-glass-epoxy-fresh-e-045', suite: 18, title: 'Glass-bead/epoxy composite tested fresh, 45.1 vol % filler: measured Young\'s modulus', mode: 'bounds',
+    inputs: { mode: 'bounds', E_m: 2.68e9, nu_m: 0.394, E_i: 7.6e10, nu_i: 0.23, shape: 'sphere', poros: 0, vf: 0.4513 }, kpi: 'E_eff', expected: 8.17e9, tol: 0.06, kind: 'experiment',
+    measured: { value: 8.17, uncertainty: 0.23, unit: 'GPa' },
+    source: { authors: 'Smith, J. C.', title: 'Experimental values for the elastic constants of a particulate-filled glassy polymer', journal: 'J. Res. Natl. Bur. Stand. A', year: 1976, doi: '10.6028/jres.080A.008', url: 'https://nvlpubs.nist.gov/nistpubs/jres/80A/jresv80An1p45_A1b.pdf' },
+    conditions: 'Glass spheres (1–30 µm, soda-lime crown glass, silane-coupled) in DGEBA/TETA epoxy; dumbbell tensile specimens at 0.05 cm/min, 24 °C, tested 12–14 days after casting; mean of four specimens',
+    match: ['vf', 'E_m', 'E_i'],
+    reference: 'Smith, J. Res. Natl. Bur. Stand. 80A, 45 (1976)',
+    note: 'Measured value from table 1 (volume fraction 0.4513, tested after 12 days). Matrix constants for the fresh series as given in section 5 of the source: E = 2.68 GPa (mean of the unfilled castings of table 1, which scatter between 2.48 and 3.21 GPa) and ν = 0.394. The differential scheme gives 8.18 GPa (+0.1 %); the tolerance reflects the specimen scatter (3 %) and the uncertainty of the fresh-matrix modulus.'
+  },
+  {
+    id: 's18-exp-smith-glass-epoxy-fresh-e-050', suite: 18, title: 'Glass-bead/epoxy composite tested fresh, 49.8 vol % filler: measured Young\'s modulus', mode: 'bounds',
+    inputs: { mode: 'bounds', E_m: 2.68e9, nu_m: 0.394, E_i: 7.6e10, nu_i: 0.23, shape: 'sphere', poros: 0, vf: 0.4981 }, kpi: 'E_eff', expected: 9.95e9, tol: 0.1, kind: 'experiment',
+    measured: { value: 9.95, uncertainty: 0.9, unit: 'GPa' },
+    source: { authors: 'Smith, J. C.', title: 'Experimental values for the elastic constants of a particulate-filled glassy polymer', journal: 'J. Res. Natl. Bur. Stand. A', year: 1976, doi: '10.6028/jres.080A.008', url: 'https://nvlpubs.nist.gov/nistpubs/jres/80A/jresv80An1p45_A1b.pdf' },
+    conditions: 'Glass spheres (1–30 µm, soda-lime crown glass, silane-coupled) in DGEBA/TETA epoxy; dumbbell tensile specimens at 0.05 cm/min, 24 °C, tested 12–14 days after casting; mean of three specimens',
+    match: ['vf', 'E_m', 'E_i'],
+    reference: 'Smith, J. Res. Natl. Bur. Stand. 80A, 45 (1976)',
+    note: 'Measured value from table 1 (volume fraction 0.4981, tested after 14 days; probable error 9 %). Matrix constants for the fresh series as given in section 5 of the source (E = 2.68 GPa, ν = 0.394). The differential scheme gives 9.47 GPa (−4.8 %); the tolerance is the quoted probable error of the measurement.'
+  },
+  {
+    id: 's18-exp-smith-glass-epoxy-nu-030', suite: 18, title: 'Glass-bead/epoxy composite, 30.3 vol % filler: measured Poisson\'s ratio', mode: 'bounds',
+    inputs: { mode: 'bounds', E_m: 3.01e9, nu_m: 0.394, E_i: 7.6e10, nu_i: 0.23, shape: 'sphere', poros: 0, vf: 0.3025 }, kpi: 'nu_eff', expected: 0.375, tol: 0.06, kind: 'experiment',
+    measured: { value: 0.375, uncertainty: 0.017, unit: '–' },
+    source: { authors: 'Smith, J. C.', title: 'Experimental values for the elastic constants of a particulate-filled glassy polymer', journal: 'J. Res. Natl. Bur. Stand. A', year: 1976, doi: '10.6028/jres.080A.008', url: 'https://nvlpubs.nist.gov/nistpubs/jres/80A/jresv80An1p45_A1b.pdf' },
+    conditions: 'Glass spheres (1–30 µm, soda-lime crown glass, silane-coupled) in DGEBA/TETA epoxy; dumbbell tensile specimens at 0.05 cm/min, 24 °C, tested about 200 days after casting (stored at 54 % R.H.); mean of four specimens; transverse strain by LVDT extensometer simultaneously with the axial strain',
+    match: ['vf', 'nu_m', 'nu_i'],
+    reference: 'Smith, J. Res. Natl. Bur. Stand. 80A, 45 (1976)',
+    note: 'Measured value from table 2 (volume fraction 0.3025). Phase constants as given in the source: matrix E = 3.01 GPa and ν = 0.394 (section 5; the three unfilled castings of table 2 measured 2.99–3.03 GPa), glass E = 76 GPa (manufacturer, section 2) and ν = 0.23 (literature value quoted in section 2). Uncertainty is the probable error of a single observation. The source notes considerable scatter in the measured Poisson\'s ratios; the tolerance is the quoted probable error (about 5 %). The differential scheme gives 0.360 (−4 %).'
+  },
+  {
+    id: 's18-exp-copper-polycrystal-e', suite: 18, title: 'Copper: polycrystal Young\'s modulus from measured single-crystal constants', mode: 'atomistic',
+    inputs: { mode: 'atomistic', src: 'cij', sym: 'cubic', C11: 169.1, C12: 122.2, C44: 75.42, rho_x: 8932, formula: 'Cu' }, kpi: 'E', expected: 123.5e9, tol: 0.05, kind: 'experiment',
+    measured: { value: 123.5, uncertainty: 0.7, unit: 'GPa' },
+    source: { authors: 'Ledbetter, H. M. & Naimon, E. R.', title: 'Elastic properties of metals and alloys. II. Copper', journal: 'J. Phys. Chem. Ref. Data', year: 1974, doi: '10.1063/1.3253150', url: 'https://srd.nist.gov/jpcrdreprint/1.3253150.pdf' },
+    conditions: 'Annealed polycrystalline copper at room temperature; mean of the published static and dynamic measurements compiled in the source (outliers beyond 1.5 σ excluded), uncertainty is the standard error of the mean',
+    match: ['C11', 'C12', 'C44'],
+    reference: 'Ledbetter & Naimon, J. Phys. Chem. Ref. Data 3, 897 (1974)',
+    note: 'Measured polycrystal value from table 10 (E = 1.235 ± 0.007 × 10¹¹ N/m²). Inputs are the recommended ultrasonic single-crystal stiffnesses of the same table (C11 = 169.1, C12 = 122.2, C44 = 75.42 GPa), measured independently on single crystals; density 8932 kg/m³ from table 1. The source reports that the arithmetic Voigt–Reuss–Hill average (127.3 GPa) overestimates the measured polycrystal modulus of this strongly anisotropic metal (Zener ratio 3.2) by about 3 %, which the tolerance reflects.'
+  },
+  {
+    id: 's18-exp-copper-polycrystal-vl', suite: 18, title: 'Copper: measured longitudinal ultrasonic velocity of the polycrystal', mode: 'atomistic',
+    inputs: { mode: 'atomistic', src: 'cij', sym: 'cubic', C11: 169.1, C12: 122.2, C44: 75.42, rho_x: 8932, formula: 'Cu' }, kpi: 'v_l', expected: 4790, tol: 0.03, kind: 'experiment',
+    measured: { value: 0.479e6, uncertainty: null, unit: 'cm/s' },
+    source: { authors: 'Ledbetter, H. M. & Naimon, E. R.', title: 'Elastic properties of metals and alloys. II. Copper', journal: 'J. Phys. Chem. Ref. Data', year: 1974, doi: '10.1063/1.3253150', url: 'https://srd.nist.gov/jpcrdreprint/1.3253150.pdf' },
+    conditions: 'Polycrystalline copper, ultrasonic pulse measurement at 2.5 MHz, room temperature (Haskins 1961, as compiled in the source)',
+    match: ['C11', 'C12', 'C44', 'rho_x'],
+    reference: 'Ledbetter & Naimon, J. Phys. Chem. Ref. Data 3, 897 (1974) — entry Haskins (1961)',
+    note: 'Measured value from the comments column of table 9 (Haskins 1961: longitudinal velocity 0.479 × 10⁶ cm/s). Inputs are the recommended single-crystal stiffnesses of table 10 and the density of table 1; the specimen density of the velocity measurement is not given in the source. The velocity depends on the Hill-averaged K + 4G/3, so the 3 % shear-modulus bias of the average enters with a weight of about one sixth.'
   },
 ];

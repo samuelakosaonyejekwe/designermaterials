@@ -4,8 +4,8 @@ import { h, icon, toast, download, tabs, table, toCSV, parseCSV, fileBytes, debo
 import { fmt } from '../core/num.js';
 import { lineChart, heatmap, barChart, histChart } from '../core/plot.js';
 import { viewer } from '../core/view3d.js';
-import { loadSuite, loadSpec, resolveInputs, runSuite, defaultInputs, finishRun, validateInputs, benchStatus, assessGates } from '../core/engine.js';
-import { runSuiteBenchmarks, loadBenchmarks, summarise, KIND as BENCH_KIND } from '../core/benchmarks.js';
+import { loadSuite, loadSpec, resolveInputs, runSuite, defaultInputs, finishRun, validateInputs, benchStatus, expStatus, assessGates } from '../core/engine.js';
+import { runSuiteBenchmarks, loadBenchmarks, summarise, nearestExperiments, runBenchmark, KIND as BENCH_KIND } from '../core/benchmarks.js';
 import { kv } from '../core/store.js';
 import { project, setInputs, saveProject, onProject } from '../core/store.js';
 import { visible, oat, morris, sobol, monteCarlo, numericInputs } from '../core/sensitivity.js';
@@ -155,6 +155,21 @@ export async function suitePage(root, id) {
     loadBenchmarks(id).then(list => { if (!list.length) { box.replaceChildren(h('p.muted', 'No reference benchmarks are packaged for this suite yet.')); return; } box.replaceChildren(h('p', `${list.length} independent reference results are packaged for this suite.`)); go(); });
     return h('div.card', h('div.row.between.wrap', h('h3', 'Reference benchmarks'), h('button.btn.sm', { onclick: go }, icon('refresh', 14), ' Run again')), prog, box);
   }
+  // Published experiments: is the current case inside the experimentally covered domain?
+  function experimentCard() {
+    const box = h('div', h('p.muted', 'Comparing your case with published experiments…'));
+    const src = b => b.source ? `${(b.source.authors || '').split(',')[0]}${/,/.test(b.source.authors || '') ? ' et al.' : ''}, ${b.source.journal || ''} ${b.source.year || ''}`.trim() : b.reference;
+    (async () => { const near = await nearestExperiments(id, values, suite); if (!near.length) { box.replaceChildren(h('p.muted', 'No published experiment is packaged for this analysis yet. Use your own measurements below.')); return; }
+      const top = near.slice(0, 4), res = []; for (const b of top) res.push(await runBenchmark(b, suite));
+      const best = top[0], r0 = res[0], inside = best.distance <= 0.15, was = expStatus[id]?.inputs === JSON.stringify(values) && expStatus[id]?.ok;
+      expStatus[id] = { inputs: JSON.stringify(values), title: best.title, source: src(best), distance: best.distance, ok: r0.ok, dev: r0.relative ? r0.dev : 0 };
+      box.replaceChildren(h('div.cred', { class: inside && r0.ok ? '' : 'bad' }, icon(inside && r0.ok ? 'check' : 'info', 16), h('div', inside && r0.ok ? h('b', `Your case is within ${(best.distance * 100).toFixed(0)} % of a published experiment that this solver reproduces. `) : h('b', Number.isFinite(best.distance) ? `The nearest published experiment differs from your case by ${(best.distance * 100).toFixed(0)} % in its operating conditions. ` : 'The nearest published experiment uses different settings from your case. '), inside && r0.ok ? 'It counts as independent experimental evidence for this operating point.' : 'Experimental support is strongest near the published conditions; load them to see the comparison, or validate with your own measurements below.')),
+        table(['Published experiment', 'Measured', 'This solver', 'Deviation', 'Distance from your case', 'Source', ''], top.map((b, k) => [h('span', { title: b.conditions || '' }, b.title), b.measured ? `${fmt(b.measured.value)}${b.measured.uncertainty ? ' ± ' + fmt(b.measured.uncertainty) : ''} ${b.measured.unit || ''}` : fmt(b.expected), res[k].error ? 'error' : fmt(res[k].got), res[k].relative ? `${(res[k].dev * 100).toFixed(1)} %` : fmt(res[k].dev, 3), Number.isFinite(b.distance) ? `${(b.distance * 100).toFixed(0)} %` : 'different settings', b.source?.doi ? h('a', { href: 'https://doi.org/' + b.source.doi, target: '_blank', rel: 'noopener' }, src(b)) : b.source?.url ? h('a', { href: b.source.url, target: '_blank', rel: 'noopener' }, src(b)) : src(b), h('button.btn.sm.ghost', { onclick: () => { values = { ...values, ...b.inputs }; for (const k in b.inputs) origin[k] = 'user'; renderForm(); run().then(() => rerenderCvv()); toast('Loaded the published experimental conditions', 'ok'); } }, 'Load conditions')])),
+        best.diff.length && Number.isFinite(best.distance) ? h('p.hint', 'Largest differences from the nearest experiment: ' + best.diff.slice(0, 4).map(d => `${d.label} ${fmt(d.yours)} vs ${fmt(d.theirs)} ${d.unit}`).join('; ') + '.') : null);
+      if (!!was !== !!(inside && r0.ok) || !was) { if (last) { last.credibility = assessGates(suite, values, last, origin); const gl = document.querySelector('.gatesbox'); if (gl) gl.replaceChildren(...gatesView()); } }
+    })();
+    return h('div.card', h('h3', 'Published experiments near your case'), h('p', 'Measured results from the literature that this solver has been run against. If your inputs are close to one of them, that experiment is independent evidence for your case — no measurements of your own required.'), box);
+  }
   // Validate / calibrate the current case against the user's own measurements.
   function evidenceCard() {
     if (!last) return h('div.card', h('p.muted', 'Run the simulation first; then compare it with your measurements here.'));
@@ -179,9 +194,10 @@ export async function suitePage(root, id) {
         h('div.runbar', h('label', 'Acceptance ', acc, ' %'), h('button.btn.primary', { onclick: compare }, icon('check', 15), ' Compare and record')), out),
       h('div.card', h('h3', 'Calibrate to a measurement'), h('p', 'Fit one model input so that a predicted result reproduces your measured value. Validate afterwards with a different measurement — data used for calibration does not count as validation.'), h('div.fields', h('div.field', h('label', 'Result you measured'), kSel), h('div.field', h('label', 'Measured value'), target), h('div.field', h('label', 'Input to fit'), iSel)), h('div.runbar', h('button.btn', { onclick: calibrate }, icon('target', 15), ' Fit input')), calOut));
   }
+  const gatesView = () => [h('h3', 'Qualification gates for the current run'), h('ul.gates', last.credibility.gates.map(g => h('li.' + g.status, h('span.gs', { pass: 'Passed', partial: 'Partly evidenced', open: 'Open', fail: 'Failed' }[g.status]), h('b', `Gate ${g.id} — ${g.name}`), h('p', g.detail)))), h('p', h('b', 'Evidence status: '), last.credibility.level), h('a.btn.sm', { href: '#/suite/24' }, 'Open Suite 24 to add verification, calibration and validation evidence')];
   let rerenderCvv = () => { };
   const cvvTab = () => { const box = h('div'); rerenderCvv = () => { if (last) last.credibility = assessGates(suite, values, last, origin); box.replaceChildren(...cvvBody()); }; box.append(...cvvBody()); return box; };
-  const cvvBody = () => [benchCard(), evidenceCard(), last ? h('div.card', h('h3', 'Qualification gates for the current run'), h('ul.gates', last.credibility.gates.map(g => h('li.' + g.status, h('span.gs', { pass: 'Passed', partial: 'Partly evidenced', open: 'Open', fail: 'Failed' }[g.status]), h('b', `Gate ${g.id} — ${g.name}`), h('p', g.detail)))), h('p', h('b', 'Evidence status: '), last.credibility.level), h('a.btn.sm', { href: '#/suite/24' }, 'Open Suite 24 to add verification, calibration and validation evidence')) : h('div.card', h('p.muted', 'Run the simulation to see its qualification gates.')),
+  const cvvBody = () => [benchCard(), experimentCard(), evidenceCard(), last ? h('div.card.gatesbox', ...gatesView()) : h('div.card', h('p.muted', 'Run the simulation to see its qualification gates.')),
     h('div.card', h('h3', 'Calibration'), h('p', s.cvv.cal)), h('div.card', h('h3', 'Verification'), h('p', s.cvv.ver)), h('div.card', h('h3', 'Validation'), h('p', s.cvv.val)), h('div.card', h('h3', 'Expected evidence'), h('p', s.cvv.exp)), s.cvv.note ? h('div.card.note', icon('info', 16), h('p', s.cvv.note)) : null];
   const ioTab = () => h('div.two', h('div', h('h3', 'Accepted input data'), s.io.inputs.map(g => h('div.card', h('h4', g.group), h('ul.cols', g.items.map(x => h('li', x))))), h('a.btn.sm', { href: '#/data' }, icon('upload', 14), ' Open the data portal to import case data')), h('div', h('h3', 'Generated output data'), s.io.outputs.map(g => h('div.card', h('h4', g.group), h('ul.cols', g.items.map(x => h('li', x)))))));
   function liveTab() {

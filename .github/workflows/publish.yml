@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
   pages: write
   id-token: write
 
@@ -43,5 +44,14 @@ jobs:
       - name: Refresh independent copies
         if: github.event_name == 'push'
         continue-on-error: true
-        timeout-minutes: 45
-        run: node tools/publish-mirrors.mjs "v$(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).version)")"
+        timeout-minutes: 15
+        run: node tools/publish-mirrors.mjs "v$(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).version)")" --skip-archive
+      - name: Bring the archive copy up to date
+        continue-on-error: true
+        timeout-minutes: 30
+        run: node tools/archive-catchup.mjs 25
+      - name: Keep the schedule active
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/publish.yml/enable"

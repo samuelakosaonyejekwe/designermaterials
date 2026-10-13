@@ -135,18 +135,34 @@ function deposit(inp) {
 }
 
 // ---------------------------------------------------------------- ionic transport
+// Dc, Da: limiting (infinite-dilution) ionic diffusion coefficients in water at 25 °C, m²/s (handbook values: K⁺ 1.957, Na⁺ 1.334, H⁺ 9.311,
+// Ag⁺ 1.648, Cu²⁺ 0.714, Cl⁻ 2.032, NO₃⁻ 1.902, SO₄²⁻ 1.065, all ×10⁻⁹). The ZnO reference case keeps the diffusivities of the platform's
+// reference synthesis (7.5×10⁻¹⁰ and 5.3×10⁻⁹ m²/s; handbook 7.03×10⁻¹⁰ and 5.273×10⁻⁹).
 const SYS = {
-  zno: { name: 'Zn²⁺ / OH⁻ (ZnO reference case)', cat: 'Zn2+', an: 'OH-', zc: 2, za: -1 },
-  nacl: { name: 'NaCl', cat: 'Na+', an: 'Cl-', zc: 1, za: -1, salt: 'NaCl' }, kcl: { name: 'KCl', cat: 'K+', an: 'Cl-', zc: 1, za: -1, salt: 'KCl' },
-  cuso4: { name: 'CuSO₄', cat: 'Cu2+', an: 'SO4^2-', zc: 2, za: -2, salt: 'CuSO4' }, hcl: { name: 'HCl', cat: 'H+', an: 'Cl-', zc: 1, za: -1, salt: 'HCl' }, agno3: { name: 'AgNO₃', cat: 'Ag+', an: 'NO3-', zc: 1, za: -1, salt: 'AgNO3' },
+  zno: { name: 'Zn²⁺ / OH⁻ (ZnO reference case)', cat: 'Zn2+', an: 'OH-', zc: 2, za: -1, Dc: 7.5e-10, Da: 5.3e-9 },
+  nacl: { name: 'NaCl', cat: 'Na+', an: 'Cl-', zc: 1, za: -1, salt: 'NaCl', Dc: 1.334e-9, Da: 2.032e-9 }, kcl: { name: 'KCl', cat: 'K+', an: 'Cl-', zc: 1, za: -1, salt: 'KCl', Dc: 1.957e-9, Da: 2.032e-9 },
+  cuso4: { name: 'CuSO₄', cat: 'Cu2+', an: 'SO4^2-', zc: 2, za: -2, salt: 'CuSO4', Dc: 7.14e-10, Da: 1.065e-9 }, hcl: { name: 'HCl', cat: 'H+', an: 'Cl-', zc: 1, za: -1, salt: 'HCl', Dc: 9.311e-9, Da: 2.032e-9 }, agno3: { name: 'AgNO₃', cat: 'Ag+', an: 'NO3-', zc: 1, za: -1, salt: 'AgNO3', Dc: 1.648e-9, Da: 1.902e-9 },
 };
+const muWaterI = T => 2.414e-5 * Math.pow(10, 247.8 / (Math.max(T, 250) - 140));   // Pa·s, liquid water (Vogel form)
 const bern = p => (Math.abs(p) < 1e-6 ? 1 + p / 2 : p / (1 - Math.exp(-p)));
 function ionic(inp) {
   const s = SYS[inp.system] || SYS.zno, T = inp.T + 273.15, W = [], E = inp.Efield, L = inp.Lgap * 1e-3, eps = inp.eps_r * EPS0;
-  const ions = [{ f: s.cat, z: s.zc, c: inp.c_cat, D: inp.D_cat }, { f: s.an, z: s.za, c: inp.c_an, D: inp.D_an }];
-  const sigma = (F * F / (R * T)) * N.sum(ions.map(i => i.z * i.z * i.D * i.c)), I = 0.5 * N.sum(ions.map(i => i.z * i.z * i.c));
-  const debye = I > 0 ? Math.sqrt(eps * R * T / (2 * F * F * I)) : 1e-3, joule = sigma * E * E, jMig = sigma * E;
-  ions.forEach(i => { i.mob = Math.abs(i.z) * i.D * F / (R * T); i.u = i.z * i.D * F * E / (R * T); i.Pe = i.z * F * E * L / (R * T); i.t = sigma > 0 ? (F * F / (R * T)) * i.z * i.z * i.D * i.c / sigma : 0; });
+  // Diffusivities: tabulated limiting values of the selected electrolyte, scaled from 25 °C with the Stokes–Einstein T/μ rule, or the entered values.
+  const tab = inp.D_src !== 'custom', eta = muWaterI(T), Dsc = (T / 298.15) * muWaterI(298.15) / eta;
+  const ions = [{ f: s.cat, z: s.zc, c: inp.c_cat, D: tab ? s.Dc * Dsc : inp.D_cat }, { f: s.an, z: s.za, c: inp.c_an, D: tab ? s.Da * Dsc : inp.D_an }];
+  if (tab && (T < 273.15 || T > 373.15)) W.push('The tabulated diffusivities are scaled with the viscosity of liquid water; outside 0–100 °C enter measured diffusivities instead.');
+  const I = 0.5 * N.sum(ions.map(i => i.z * i.z * i.c)), debye = I > 0 ? Math.sqrt(eps * R * T / (2 * F * F * I)) : 1e-3;
+  ions.forEach(i => { i.lam0 = F * F * i.z * i.z * i.D / (R * T); });
+  const sigma0 = N.sum(ions.map(i => i.lam0 * i.c));
+  // Debye–Hückel–Onsager conductivity with the finite-ion-size factor 1/(1 + κa) (Robinson & Stokes): relaxation and electrophoretic terms
+  const dho = inp.cond_model !== 'ne', aIon = inp.a_ion * 1e-9, kap = 1 / debye, z12 = Math.abs(s.zc * s.za);
+  const leq = ions.map(i => i.lam0 / Math.abs(i.z)), qO = z12 / (Math.abs(s.zc) + Math.abs(s.za)) * (leq[0] + leq[1]) / pos(Math.abs(s.za) * leq[0] + Math.abs(s.zc) * leq[1]);
+  const relax = z12 * Q_E * Q_E * kap / (12 * PI * eps * K_B * T) * qO / (1 + Math.sqrt(qO)), size = 1 + kap * aIon; let floored = false;
+  ions.forEach(i => { const el = i.z * i.z * F * Q_E * kap / (6 * PI * eta); let l = dho && I > 0 ? i.lam0 * (1 - relax / size) - el / size : i.lam0; if (l < 0.1 * i.lam0) { l = 0.1 * i.lam0; floored = true; } i.lam = l; });
+  const sigma = N.sum(ions.map(i => i.lam * i.c)), corr = sigma0 > 0 ? sigma / sigma0 : 1, LamEq = sigma / pos(Math.abs(s.zc) * inp.c_cat);
+  if (floored) W.push('The Debye–Hückel–Onsager correction exceeds 90 % of the limiting conductivity of an ion: the electrolyte is far too concentrated (or too highly charged) for the theory, and the ionic conductivity was floored at 10 % of its limiting value. Use a measured conductivity.');
+  const joule = sigma * E * E, jMig = sigma * E;
+  ions.forEach(i => { i.mob = Math.abs(i.z) * i.D * F / (R * T); i.u = i.z * i.D * F * E / (R * T); i.Pe = i.z * F * E * L / (R * T); i.t = sigma > 0 ? i.lam * i.c / sigma : 0; });
   const cat = ions[0], an = ions[1], enh = bern(cat.Pe), Jd = cat.D * cat.c / L, Jc = Jd * enh, jc = cat.z * F * Jc;
   const neutral = cat.z * cat.c + an.z * an.c, xs = N.linspace(0, 1, 121);
   const profC = xs.map(x => (cat.Pe > 0 ? (1 - Math.exp(-cat.Pe * (1 - x))) / (1 - Math.exp(-cat.Pe)) : Math.abs(cat.Pe) < 1e-9 ? 1 - x : (Math.exp(cat.Pe) - Math.exp(cat.Pe * x)) / (Math.exp(cat.Pe) - 1)));
@@ -155,7 +171,9 @@ function ionic(inp) {
   if (L / debye > 100) W.push(`The gap is ${f3(L / debye)} Debye lengths wide: in a real cell most of the applied potential drops in the electrode double layers and the bulk field is screened unless current flows; the uniform-field assumption describes the conducting bulk only.`);
   if (Math.abs(neutral) > 1e-6 * Math.max(Math.abs(cat.z * cat.c), 1e-30)) W.push(`The entered concentrations are not electroneutral (Σ zᵢcᵢ = ${f3(neutral)} mol/m³); a counter-ion not listed must balance the charge and would add to the conductivity.`);
   if (dTdt > 0.1) W.push(`Joule heating of ${f3(joule)} W/m³ raises the temperature by ${f3(dTdt)} K/s if not removed; convection and property drift follow.`);
-  if (I > 100) W.push('Ionic strength exceeds about 0.1 mol/L: the dilute Nernst–Einstein relation overestimates conductivity (ion pairing and relaxation effects are neglected).');
+  if (I > 100) W.push(dho ? 'Ionic strength exceeds about 0.1 mol/L: the Debye–Hückel–Onsager correction with the ion-size factor is reliable to a few per cent only up to about 0.1 mol/L for 1:1 salts (less for multivalent ions, where ion pairing, not modelled, lowers the conductivity further).' : 'Ionic strength exceeds about 0.1 mol/L: the Nernst–Einstein (infinite-dilution) relation overestimates the conductivity, by 16 % for 0.1 mol/kg KCl; select the Debye–Hückel–Onsager model.');
+  else if (!dho && I > 1) W.push('Nernst–Einstein (infinite-dilution) conductivity selected: relaxation and electrophoretic effects are neglected, which overestimates the conductivity by about 2 % at 1 mmol/L and 6 % at 10 mmol/L for a 1:1 salt.');
+  if (!tab && inp.system !== 'zno' && inp.D_cat === 7.5e-10 && inp.D_an === 5.3e-9) W.push(`Entered diffusivities are still those of the Zn²⁺/OH⁻ reference case although ${s.name} is selected; choose the tabulated values or enter the diffusivities of these ions.`);
   const Es = N.logspace(10, 1e6, 60), equations = [];
   try { equations.push(eqn('ionic', 'Ions considered', `${chem.prettyFormula(s.cat)} (z = ${s.zc}, M = ${f4(chem.molarMass(s.cat))} g/mol) and ${chem.prettyFormula(s.an)} (z = ${s.za}, M = ${f4(chem.molarMass(s.an))} g/mol)`)); } catch (e) { W.push(e.message); }
   try {
@@ -163,11 +181,15 @@ function ionic(inp) {
     else { const io = chem.ionicEquations([{ f: 'Zn(NO3)2', phase: 'aq' }, { f: 'NaOH', phase: 'aq' }], [{ f: 'ZnO', phase: 's' }, { f: 'H2O', phase: 'l' }, { f: 'NaNO3', phase: 'aq' }]); equations.push(eqn('chemical', 'Molecular equation (reference precipitation)', io.molecular), eqn('ionic', 'Complete ionic equation', io.completeIonic), eqn('ionic', 'Net ionic equation', io.netIonic, 'spectators: ' + io.spectators.join(', ')), eqn('half-cell', 'Cathodic base generation (if electro-assisted)', chem.equationString(['H2O', 'e-'], ['H2', 'OH-']))); }
   } catch (e) { W.push('Chemistry: ' + e.message); }
   equations.push(eqn('governing', 'Nernst–Planck flux (steady, 1-D, uniform field)', 'Jᵢ = −Dᵢ dcᵢ/dx + (zᵢF/RT)·Dᵢ·E·cᵢ = constant'), eqn('formula', 'Flux with field', 'J = (D c₀/L)·Pe/(1 − e^(−Pe)),  Pe = zFEL/RT'),
-    eqn('constitutive', 'Nernst–Einstein conductivity', 'σ = (F²/RT) Σ zᵢ² Dᵢ cᵢ'), eqn('formula', 'Joule heating', 'q = σE²'), eqn('formula', 'Debye length', 'λ_D = √(ε RT / (F² Σ zᵢ² cᵢ))'));
+    eqn('constitutive', 'Limiting (Nernst–Einstein) ionic conductivity', 'λᵢ° = zᵢ² F² Dᵢ / RT,   σ° = Σ λᵢ° cᵢ'),
+    ...(dho ? [eqn('constitutive', 'Debye–Hückel–Onsager conductivity with ion-size factor', 'λᵢ = λᵢ° − [ λᵢ° · |z₊z₋| e² κ q / (12π ε k_BT (1 + √q)) + zᵢ² F e κ / (6π η) ] / (1 + κa),   σ = Σ λᵢ cᵢ', `relaxation and electrophoretic terms; q = ${f4(qO)}, κ = 1/λ_D, a = ${f3(inp.a_ion)} nm, η = ${f3(eta * 1000)} mPa·s`)] : []), eqn('formula', 'Joule heating', 'q = σE²'), eqn('formula', 'Debye length', 'λ_D = √(ε RT / (F² Σ zᵢ² cᵢ))'));
   return {
-    summary: `For ${s.name} at ${inp.T} °C the electrolyte conductivity is ${f3(sigma)} S/m, so a field of ${f3(E)} V/m drives ${f3(jMig)} A/m² and dissipates ${f3(joule)} W/m³ as Joule heat. Electromigration changes the cation flux to a sink ${f3(inp.Lgap)} mm away by a factor ${f3(enh)} relative to diffusion alone (Pe = ${f3(cat.Pe)}). The Debye length is ${f3(debye * 1e9)} nm.`,
+    summary: `For ${s.name} at ${inp.T} °C the electrolyte conductivity is ${f3(sigma)} S/m (${dho ? `Debye–Hückel–Onsager, ${f3(100 * (1 - corr))} % below the infinite-dilution value` : 'Nernst–Einstein, infinite dilution'}), so a field of ${f3(E)} V/m drives ${f3(jMig)} A/m² and dissipates ${f3(joule)} W/m³ as Joule heat. Electromigration changes the cation flux to a sink ${f3(inp.Lgap)} mm away by a factor ${f3(enh)} relative to diffusion alone (Pe = ${f3(cat.Pe)}). The Debye length is ${f3(debye * 1e9)} nm.`,
     kpis: [
-      kpi('sigma', 'Ionic conductivity', sigma, 'S/m', 'Dilute-solution conductivity from the Nernst–Einstein relation summed over the two ions; compare with a conductivity-meter reading to check the diffusivities.'),
+      kpi('sigma', 'Ionic conductivity', sigma, 'S/m', dho ? `Conductivity from the limiting ionic conductivities (Nernst–Einstein, ${tab ? 'tabulated' : 'entered'} diffusivities) reduced by the Debye–Hückel–Onsager relaxation and electrophoretic terms with the ion-size factor 1/(1 + κa); compare with a conductivity-meter reading.` : 'Infinite-dilution conductivity from the Nernst–Einstein relation summed over the two ions; it overestimates the conductivity of real solutions above about 1 mmol/L.'),
+      kpi('sigma_inf', 'Infinite-dilution (Nernst–Einstein) conductivity', sigma0, 'S/m', 'Conductivity the same ions would give without ion–ion interactions, σ° = (F²/RT) Σ zᵢ² Dᵢ cᵢ; the ratio to the reported conductivity is the interaction correction.'),
+      kpi('cond_ratio', 'Conductivity ratio σ/σ°', corr, '–', 'Factor by which ion-atmosphere relaxation and the electrophoretic effect lower the conductivity; 1 for the infinite-dilution model. Values below about 0.75 are outside the reliable range of the theory.', corr > 0.75),
+      kpi('Lambda', 'Equivalent conductivity', LamEq * 1e4, 'S·cm²/equiv', 'Conductivity divided by the cation charge concentration |z₊|c₊; for KCl at 25 °C it is 149.9 at infinite dilution and 141.3 at 0.01 mol/L.'),
       kpi('joule', 'Joule heating power density', joule, 'W/m³', 'Volumetric heat release σE² in the bulk electrolyte; multiply by the electrolyte volume for the heat load on the thermostat.', dTdt < 0.1),
       kpi('dTdt', 'Adiabatic heating rate', dTdt, 'K/s', 'Temperature rise rate if no heat is removed, using the volumetric heat capacity of water (4.18 MJ/m³/K).', dTdt < 0.1),
       kpi('j_mig', 'Ohmic current density', jMig, 'A/m²', 'Bulk migration current density σE carried by both ions when the electrodes can sustain the current.'),
@@ -187,13 +209,13 @@ function ionic(inp) {
       ser('enhE', 'Flux enhancement and Joule heating against field', 'electric field (V/m)', 'value', [{ name: 'flux enhancement (–)', x: Es, y: Es.map(e => bern(cat.z * F * e * L / (R * T))) }, { name: 'Joule heating (kW/m³)', x: Es, y: Es.map(e => sigma * e * e / 1000) }],
         'Trade-off between transport enhancement (linear in field once Pe ≫ 1) and Joule heating (quadratic in field). The useful operating field is where the enhancement is significant but the heat load is still removable.', { logx: true, logy: true }),
     ],
-    tables: [{ key: 'ions', title: 'Ion transport properties', columns: ['ion', 'z', 'c (mol/m³)', 'D (m²/s)', 'mobility (m²/V/s)', 'drift velocity (m/s)', 'transference'], rows: ions.map(i => [chem.prettyFormula(i.f), i.z, i.c, i.D, +i.mob.toExponential(3), +i.u.toExponential(3), +i.t.toFixed(4)]), explain: 'Per-ion mobility from the Einstein relation, drift velocity in the applied field and share of the migration current.' }],
+    tables: [{ key: 'ions', title: 'Ion transport properties', columns: ['ion', 'z', 'c (mol/m³)', 'D (m²/s)', 'mobility (m²/V/s)', 'drift velocity (m/s)', 'transference'], rows: ions.map(i => [chem.prettyFormula(i.f), i.z, i.c, i.D, +i.mob.toExponential(3), +i.u.toExponential(3), +i.t.toFixed(4)]), explain: 'Per-ion limiting mobility from the Einstein relation, drift velocity in the applied field and share of the migration current (from the corrected ionic conductivities).' }],
     equations,
     checks: [
       chk('Electroneutrality of the entered composition', Math.abs(neutral) <= 1e-6 * Math.max(Math.abs(cat.z * cat.c), 1e-30), `Σ zᵢcᵢ = ${f3(neutral)} mol/m³`),
       chk('Transference numbers sum to one', Math.abs(cat.t + an.t - 1) < 1e-9 || sigma === 0, `t₊ + t₋ = ${f4(cat.t + an.t)}`),
       chk('Flux reduces to Fick\'s law at zero field', Math.abs(bern(0) - 1) < 1e-12, 'Pe → 0 limit of Pe/(1 − e^(−Pe)) equals 1'),
-      chk('Dilute-solution validity (I < 0.1 mol/L)', I <= 100, `ionic strength ${f3(I / 1000)} mol/L`),
+      chk(dho ? 'Debye–Hückel–Onsager validity (I ≤ 0.1 mol/L, correction < 25 %)' : 'Dilute-solution validity (I < 0.1 mol/L)', I <= 100 && corr > 0.75, `ionic strength ${f3(I / 1000)} mol/L, σ/σ° = ${f4(corr)}`),
       chk('Continuum double layer thinner than the gap', debye < L, `λ_D/L = ${f3(debye / L)}`),
     ],
     warnings: W,
@@ -201,11 +223,11 @@ function ionic(inp) {
       rec('high', enh > 2 ? `The field gives a ${f3(enh)}-fold flux gain; confirm the gain experimentally by comparing growth rate with the field off, because electrode polarisation usually screens part of the applied voltage.` : `At ${f3(E)} V/m over ${f3(inp.Lgap)} mm the field barely changes transport (Pe = ${f3(cat.Pe)}); raise the potential drop above a few RT/zF (≈ ${f3(1000 * R * T / (Math.abs(cat.z) * F))} mV each) to see an effect.`, 'Electromigration Péclet number'),
       rec('medium', `Budget ${f3(joule / 1000)} kW/m³ of cooling, or pulse the field: Joule heat scales with E² whereas the flux gain scales with E.`, 'σE² heating against linear flux enhancement'),
       rec('medium', `Keep feature spacing above about ${f3(4 * debye * 1e9)} nm (4 λ_D) if independent double layers are needed, or below it to exploit overlap and ion selectivity.`, 'Debye screening length'),
-      rec('low', 'Measure the bath conductivity and back-calculate an effective diffusivity; replace the handbook values if they differ by more than 20 %.', 'Nernst–Einstein relation is exact only at infinite dilution'),
+      rec('low', `Measure the bath conductivity and compare it with ${f3(sigma)} S/m; a reading more than about 5 % lower points to ion pairing or complexation (not modelled), and then a measured conductivity should replace the estimate.`, 'Debye–Hückel–Onsager theory treats fully dissociated ions'),
       rec('medium', `Lower-field, longer-duration operation cuts electrical energy use roughly in proportion to E: the present setting consumes ${f3(joule * 3600 / 3.6e6)} kWh per m³ of electrolyte per hour.`, 'Energy intensity of field-assisted processing', true),
     ],
     publish: { 'eff.sigma': sigma, 'proc.E_field': E, 'elec.current_density': jMig, 'elec.joule_W_m3': joule, 'elec.debye_length': debye, 'elec.flux_enhancement': enh },
-    numerics: { method: 'Analytical steady Nernst–Planck solution (exponential/Bernoulli function) with Nernst–Einstein mobilities', dof: xs.length, notes: 'Uniform imposed field (supporting-electrolyte limit); Poisson coupling and convection not solved.' },
+    numerics: { method: 'Analytical steady Nernst–Planck solution (exponential/Bernoulli function) with Nernst–Einstein mobilities; conductivity from limiting ionic conductivities with the Debye–Hückel–Onsager correction (closed form)', dof: xs.length, notes: 'Uniform imposed field (supporting-electrolyte limit); Poisson coupling and convection not solved.' },
   };
 }
 
@@ -601,8 +623,11 @@ export default {
     { key: 'system', label: 'Electrolyte', type: 'select', value: 'zno', group: 'Ionic transport', showIf: M('ionic'), help: 'Identity and valence of the cation and anion. Concentrations and diffusivities below are editable.', options: Object.entries(SYS).map(([value, s]) => ({ value, label: s.name })) },
     { key: 'c_cat', label: 'Cation concentration', unit: 'mol/m³', value: 10, min: 1e-3, max: 5000, log: true, group: 'Ionic transport', bus: 'proc.c_precursor', showIf: M('ionic'), help: 'Bulk cation concentration (10 mol/m³ = 0.01 mol/L Zn²⁺ in the ZnO reference case).' },
     { key: 'c_an', label: 'Anion concentration', unit: 'mol/m³', value: 20, min: 1e-3, max: 5000, log: true, group: 'Ionic transport', bus: 'proc.c_base', showIf: M('ionic'), help: 'Bulk anion concentration (20 mol/m³ = 0.02 mol/L OH⁻ in the reference case); should balance the cation charge.' },
-    { key: 'D_cat', label: 'Cation diffusivity', unit: 'm²/s', value: 7.5e-10, min: 1e-11, max: 2e-8, log: true, group: 'Ionic transport', showIf: M('ionic'), help: 'Diffusion coefficient of the cation; its mobility follows from the Einstein relation.' },
-    { key: 'D_an', label: 'Anion diffusivity', unit: 'm²/s', value: 5.3e-9, min: 1e-11, max: 2e-8, log: true, group: 'Ionic transport', showIf: M('ionic'), help: 'Diffusion coefficient of the anion (hydroxide is unusually fast because of proton hopping).' },
+    { key: 'D_src', label: 'Ion diffusivities', type: 'select', value: 'table', group: 'Ionic transport', showIf: M('ionic'), help: 'Tabulated: limiting ionic diffusion coefficients of the selected electrolyte at 25 °C (e.g. K⁺ 1.957×10⁻⁹, Cl⁻ 2.032×10⁻⁹ m²/s), scaled to the temperature with the Stokes–Einstein T/μ rule. Entered: the two values below, taken as valid at the stated temperature.', options: [{ value: 'table', label: 'Tabulated for the selected electrolyte' }, { value: 'custom', label: 'Entered values' }] },
+    { key: 'D_cat', label: 'Cation diffusivity', unit: 'm²/s', value: 7.5e-10, min: 1e-11, max: 2e-8, log: true, group: 'Ionic transport', showIf: { mode: ['ionic'], D_src: ['custom'] }, help: 'Diffusion coefficient of the cation at the stated temperature; its mobility follows from the Einstein relation.' },
+    { key: 'D_an', label: 'Anion diffusivity', unit: 'm²/s', value: 5.3e-9, min: 1e-11, max: 2e-8, log: true, group: 'Ionic transport', showIf: { mode: ['ionic'], D_src: ['custom'] }, help: 'Diffusion coefficient of the anion at the stated temperature (hydroxide is unusually fast because of proton hopping).' },
+    { key: 'cond_model', label: 'Conductivity model', type: 'select', value: 'dho', group: 'Ionic transport', showIf: M('ionic'), help: 'Debye–Hückel–Onsager: limiting ionic conductivities reduced by the relaxation and electrophoretic effects of the ion atmosphere, with the finite-ion-size factor; reliable to a few per cent up to about 0.1 mol/L for 1:1 salts. Nernst–Einstein: infinite dilution, no ion–ion interaction.', options: [{ value: 'dho', label: 'Debye–Hückel–Onsager with ion-size factor' }, { value: 'ne', label: 'Nernst–Einstein (infinite dilution)' }] },
+    { key: 'a_ion', label: 'Ion-size parameter a', unit: 'nm', value: 0.35, min: 0.1, max: 1, group: 'Ionic transport', showIf: { mode: ['ionic'], cond_model: ['dho'] }, help: 'Mean distance of closest approach of the ions in the factor 1/(1 + κa), the same parameter as in the extended Debye–Hückel activity law: about 0.3–0.4 nm for alkali halides, 0.4–0.6 nm for multivalent or strongly hydrated ions. It matters only above about 10 mmol/L.' },
     { key: 'Efield', label: 'Applied electric field', unit: 'V/m', value: 1000, min: 0, max: 1e6, group: 'Ionic transport', bus: 'proc.E_field', showIf: M('ionic'), help: 'Uniform field in the electrolyte bulk, positive towards the consuming surface. Flux gain is linear and heating quadratic in it.' },
     { key: 'Lgap', label: 'Transport length', unit: 'mm', value: 1, min: 0.001, max: 100, log: true, group: 'Ionic transport', showIf: M('ionic'), help: 'Distance from the well-mixed bulk to the consuming surface over which the field acts.' },
     { key: 'eps_r', label: 'Solvent relative permittivity', unit: '–', value: 78.5, min: 2, max: 120, group: 'Ionic transport', showIf: M('ionic'), help: 'Dielectric constant of the solvent (78.5 for water at 25 °C); sets the Debye length.' },
@@ -652,7 +677,8 @@ export default {
   presets: [
     { name: 'ZnO nanorod electrodeposition from zinc nitrate, 70 °C', note: 'Cathodic nitrate reduction raises the local pH and precipitates ZnO on the electrode; slow kinetics need about 1 V of overpotential.', values: { mode: 'deposit', couple: 'ZnO_NO3', T: 70, c_ion: 0.005, pH: 6, eta: 1.0, j0: 2e-3, alpha_c: 0.25, delta: 200, D_ion: 1.5e-9, t_dep: 3600, anode: 'inert' } },
     { name: 'Acid copper plating of interconnects', note: 'Copper sulphate bath with a soluble anode at moderate overpotential, kinetically controlled.', values: { mode: 'deposit', couple: 'Cu', anode: 'soluble', c_ion: 0.25, pH: 1, eta: 0.1, j0: 10, alpha_c: 0.5, delta: 50, D_ion: 7e-10, t_dep: 900 } },
-    { name: 'ZnO reference case: Zn²⁺/OH⁻ under 1000 V/m', note: 'Field-assisted transport of 0.01 mol/L Zn²⁺ and 0.02 mol/L OH⁻ with the reference diffusivities.', values: { mode: 'ionic', system: 'zno', c_cat: 10, c_an: 20, D_cat: 7.5e-10, D_an: 5.3e-9, Efield: 1000, Lgap: 1, T: 90 } },
+    { name: 'ZnO reference case: Zn²⁺/OH⁻ under 1000 V/m', note: 'Field-assisted transport of 0.01 mol/L Zn²⁺ and 0.02 mol/L OH⁻ with the reference diffusivities.', values: { mode: 'ionic', system: 'zno', D_src: 'custom', c_cat: 10, c_an: 20, D_cat: 7.5e-10, D_an: 5.3e-9, Efield: 1000, Lgap: 1, T: 90 } },
+    { name: 'KCl conductivity standard, 0.01 mol/kg at 25 °C', note: 'Primary conductivity standard (9.968 mol/m³); tabulated K⁺ and Cl⁻ diffusivities with the Debye–Hückel–Onsager correction.', values: { mode: 'ionic', system: 'kcl', D_src: 'table', cond_model: 'dho', c_cat: 9.968, c_an: 9.968, Efield: 100, Lgap: 1, T: 25 } },
     { name: 'GaAs/AlGaAs resonant tunnelling diode (negative differential resistance)', note: 'Double-barrier quantum-well metamaterial-like device with a room-temperature NDR region.', values: { mode: 'rtd', V0: 0.3, b_nm: 2.5, w_nm: 5, m_w: 0.067, m_b: 0.092, Ef: 40, Gs: 6, Vmax: 0.6, A_um2: 4, Rs_c: 5, T: 27 } },
     { name: 'Germanium Esaki tunnel diode', note: 'Classic degenerate p–n tunnel diode with a peak-to-valley ratio near 10.', values: { mode: 'esaki', Ip: 5, Vp: 0.06, Iv: 0.25, Vv: 0.4, Is: 1e-9, Cj: 5, Rs_c: 1, Ls_nH: 0.05, Vmax: 0.6 } },
     { name: 'Carbon-nanotube/epoxy conductive nanocomposite', note: 'High aspect-ratio filler percolating below 1 vol %.', values: { mode: 'percolation', phi: 1, AR: 500, sig_f: 1e4, sig_m: 1e-12, t_exp: 2.2 } },

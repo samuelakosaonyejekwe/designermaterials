@@ -73,8 +73,8 @@ const BASE = `
 136|NURBS_CURVE|degree:n n_vertices:d vertex_dim:n n_knots:d knot_type:u periodic:l closed:l rational:l curve_form:u bspline_vertices:p knot_mult:p knots:p
 137|SP_CURVE|${CU}surface:p b_curve:p original:p tolerance_to_original:f
 141|GEOMETRIC_OWNER|owner:p next:p previous:p shared_geometry:p
-163|HELIX_CU_FORM|axis_pt:v axis_dir:v point:v hand:c turns:i pitch:f tol:f
-184|HELIX_SU_FORM|axis_pt:v axis_dir:v hand:c turns:i pitch:f gap:f tol:f
+163|HELIX_SU_FORM|axis_pt:v axis_dir:v hand:c turns:i pitch:f gap:f tol:f
+184|HELIX_CU_FORM|axis_pt:v axis_dir:v point:v hand:c turns:i pitch:f tol:f
 `;
 const SCHEMA = new Map(BASE.trim().split('\n').map(l => { const [t, name, f] = l.split('|'); return [+t, { type: +t, name, fields: f.trim().split(/\s+/).map(s => { const [n, c, k] = s.split(':'); return { name: n, code: c, n: k ? +k : 0 }; }) }]; }));
 export const NODE_NAMES = Object.fromEntries([...SCHEMA].map(([t, s]) => [t, s.name]));
@@ -631,3 +631,5 @@ export function xtToStep(model, opts = {}) {
   const step = written ? head + L.map((s, i) => `#${i + 1}=${s};`).join('\n') + '\nENDSEC;\nEND-ISO-10303-21;\n' : null;
   return { step, bodies, stats, notes, lost };
 }
+// The NURBS and polyline kit and the STEP literal writers, shared with the ACIS translator (sat.js)
+export const kit = { deBoor, flatKnots, insertKnot, subCurve, nearestParam, interpolate, tidy, locate, cutPolyline, sampleCurve, real, str };

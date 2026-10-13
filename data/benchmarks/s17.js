@@ -253,7 +253,7 @@ export default [
   // ── kinetic Monte Carlo ──
   {
     id: 's17-kmc-adatom-diffusivity', suite: 17, title: 'Adatom terrace diffusion coefficient ν₀a²/4 · exp(−E_s/k_BT)', mode: 'kmc',
-    inputs: { mode: 'kmc', T_C: 227, Es: 0.75, nu0: 1e13, aLat: 2.9e-10 },
+    inputs: { mode: 'kmc', T_C: 227, Es: 0.75, nu0: 1e13, aLat: 2.9e-10, flux: 100 },
     kpi: 'D', expected: 1e13 * Math.exp(-0.75 / (KB_EV * 500.15)) * 2.9e-10 ** 2 / 4, tol: 1e-4, kind: 'analytical',
     reference: 'Random-walk diffusion on a square lattice, D = Γa²/4 with Arrhenius hop rate Γ = ν₀exp(−E_s/k_BT)'
   },
@@ -273,10 +273,10 @@ export default [
   },
   {
     id: 's17-kmc-island-density-exponent', suite: 17, title: 'Sub-monolayer nucleation: island density ∝ (D/F)^−1/3', mode: 'kmc',
-    inputs: { mode: 'kmc', T_C: 227, Es: 0.75, En: 0.25, Ees: 0, flux: 1, kCov: 2, kL: 32, seed: 1 },
-    kpi: 'chi', expected: 1 / 3, tol: 0.08, kind: 'numerical-reference',
+    inputs: { mode: 'kmc', T_C: 227, Es: 0.75, En: 1, Ees: 0, flux: 0.693, kCov: 2, kL: 32, seed: 1 },
+    kpi: 'chi', expected: 1 / 3, tol: 0.05, kind: 'numerical-reference',
     reference: 'Rate-equation nucleation theory (Venables): χ = i*/(i* + 2) = 1/3 for a critical nucleus of one atom',
-    note: 'Count-weighted fit over five flux values, each repeated until 200 islands are counted or its event budget is spent (about 450 islands in total). Seeds 1–8 give 0.324–0.355 (mean 0.340, scatter 3.6 %). The remaining offset is physical, not statistical: at E_n/k_BT ≈ 5.8 dimers still dissociate slowly, which raises the exponent above 1/3, while with fully irreversible attachment (E_n ≥ 0.5 eV) the same lattice gives 0.28–0.30 because D/F = 10³–10⁵ is below the asymptotic scaling regime. A 5 % tolerance would need D/F ≥ 10⁶ and about ten times the event budget.'
+    note: 'Irreversible attachment (E_n/k_BT ≈ 23, so dimers never dissociate and i* = 1 applies). A benchmark run spends more compute than an interactive run on the same kernel: 128 × 128 lattice, D/F = 10⁵, 10⁶ and 10⁷ (the chosen flux and 1/10 and 1/100 of it), repeated with fresh seeds until 2500, 800 and 700 islands of at least two atoms are counted at 0.15 ML (about 5 × 10⁷ events, 10–15 s). Seeds 1–12 give 0.327–0.342 (mean 0.334, largest deviation 2.5 %); the counting standard error of one run is 0.009, an upper bound because island counts fluctuate less than Poisson counts. Below D/F ≈ 10⁵ the effective exponent is lower (0.27–0.31 between 10³ and 10⁵ on the same lattice), which is why the interactive run on 32 × 32 sites with D/F ≤ 10⁶ and partly reversible attachment is not asymptotic.'
   },
   // ── reaction pathways ──
   {
@@ -335,5 +335,72 @@ export default [
     inputs: { mode: 'deck', dkCrystal: 'ZnO_wurtzite', dkRep: 1, ecut: 60 },
     kpi: 'npw', expected: Math.sqrt(3) / 2 * 3.2495 ** 2 * 5.2069 / 0.529177210903 ** 3 * Math.pow(60, 1.5) / (6 * PI * PI), tol: 0.003, kind: 'analytical',
     reference: 'Free-electron sphere count N_pw = Ω k_cut³/(6π²) with k_cut² = E_cut in Rydberg atomic units (Martin, Electronic Structure)'
+  },
+  // ------------------------------------------------------------------ published experiments
+  {
+    id: 's17-exp-gaas-well-65a-intersubband', suite: 17, title: 'GaAs quantum well, 65 Å: measured intersubband (E₁→E₂) absorption energy', mode: 'tb',
+    inputs: { mode: 'tb', tbModel: 'well', wW: 6.5e-9, wV0: 0.3, wMw: 0.067, wMb: 0.092 },
+    kpi: 'E12', expected: 0.152, tol: 0.1, kind: 'experiment',
+    measured: { value: 152, uncertainty: null, unit: 'meV' },
+    source: { authors: 'West, Eglash', title: 'First observation of an extremely large-dipole infrared transition within the conduction band of a GaAs quantum well', journal: 'Appl. Phys. Lett.', year: 1985, doi: '10.1063/1.95742', url: 'https://doi.org/10.1063/1.95742' },
+    conditions: 'GaAs quantum wells 65 Å thick; conduction-band envelope-state (intersubband) transition observed by infrared absorption; linewidths quoted at room temperature',
+    match: ['tbModel', 'wW', 'wV0'],
+    reference: 'West & Eglash, Appl. Phys. Lett. 46, 1156 (1985)',
+    note: 'Resonant energy stated in the abstract. The abstract does not give the barrier composition, so the suite defaults are used (0.3 eV offset, barrier mass 0.092 m₀, i.e. Al₀.₃Ga₀.₇As-like). The single-band parabolic model omits band non-parabolicity, which lowers the upper level, and the depolarisation shift; it is 8 % high for this narrow well. Tolerance 10 %.'
+  },
+  {
+    id: 's17-exp-gaas-well-82a-intersubband', suite: 17, title: 'GaAs quantum well, 82 Å: measured intersubband (E₁→E₂) absorption energy', mode: 'tb',
+    inputs: { mode: 'tb', tbModel: 'well', wW: 8.2e-9, wV0: 0.3, wMw: 0.067, wMb: 0.092 },
+    kpi: 'E12', expected: 0.121, tol: 0.1, kind: 'experiment',
+    measured: { value: 121, uncertainty: null, unit: 'meV' },
+    source: { authors: 'West, Eglash', title: 'First observation of an extremely large-dipole infrared transition within the conduction band of a GaAs quantum well', journal: 'Appl. Phys. Lett.', year: 1985, doi: '10.1063/1.95742', url: 'https://doi.org/10.1063/1.95742' },
+    conditions: 'GaAs quantum wells 82 Å thick; conduction-band envelope-state (intersubband) transition observed by infrared absorption; linewidths quoted at room temperature',
+    match: ['tbModel', 'wW', 'wV0'],
+    reference: 'West & Eglash, Appl. Phys. Lett. 46, 1156 (1985)',
+    note: 'Resonant energy stated in the abstract. Barrier composition not given in the abstract; suite defaults used (0.3 eV offset, barrier mass 0.092 m₀). Same model limits as for the 65 Å well; tolerance 10 %.'
+  },
+  {
+    id: 's17-exp-pbs-qd-5p7nm-gap', suite: 17, title: 'PbS quantum dots, 5.7 nm (TEM): band gap from the experimental sizing curve', mode: 'tb',
+    inputs: { mode: 'tb', tbModel: 'brus', qdMat: 'PbS', qdD: 5.7e-9, qdV0: 4 },
+    kpi: 'Eg_fw', expected: 0.41 + 1 / (0.0252 * 5.7 * 5.7 + 0.283 * 5.7), tol: 0.1, kind: 'experiment',
+    measured: { value: 0.821, uncertainty: null, unit: 'eV' },
+    source: { authors: 'Moreels, Lambert, Smeets, De Muynck, Nollet, Martins, Vanhaecke, Vantomme, Delerue, Allan, Hens', title: 'Size-Dependent Optical Properties of Colloidal PbS Quantum Dots', journal: 'ACS Nano', year: 2009, doi: '10.1021/nn900863a', url: 'https://biblio.ugent.be/publication/780823/file/788711.pdf' },
+    conditions: 'Colloidal PbS quantum dots suspended in C₂Cl₄; band gap E₀ from the absorbance spectrum, diameter from TEM (sample of mean size 5.7 nm, 10 % size dispersion)',
+    match: ['qdMat', 'qdD'],
+    reference: 'Moreels et al., ACS Nano 3, 3023 (2009), Eq. 1',
+    note: 'Eq. 1 of the paper, E₀ = 0.41 + 1/(0.0252d² + 0.283d) eV, is the fit to TEM-sized samples (d = 3.9–13.3 nm); it is evaluated here at the 5.7 nm sample of Figure 1, so the value is a point on the experimental sizing curve. Compared with the finite-barrier estimate (default 4 eV barrier), which is 7 % high because the parabolic-band model overestimates confinement in PbS; the infinite-barrier Brus value (1.45 eV) is 76 % high and is not a valid estimate for this material. Tolerance 10 %.'
+  },
+  {
+    id: 's17-exp-cdse-qd-600nm-gap', suite: 17, title: 'CdSe quantum dots, 4.58 nm: first-exciton energy from the experimental sizing curve', mode: 'tb',
+    inputs: { mode: 'tb', tbModel: 'brus', qdMat: 'CdSe', qdD: 4.583e-9, qdV0: 4 },
+    kpi: 'Eg_fw', expected: 1239.842 / 600, tol: 0.05, kind: 'experiment',
+    measured: { value: 600, uncertainty: null, unit: 'nm' },
+    source: { authors: 'Manthiram, Beberwyck, Talapin, Alivisatos', title: 'Seeded Synthesis of CdSe/CdS Rod and Tetrapod Nanocrystals', journal: 'J. Vis. Exp.', year: 2013, doi: '10.3791/50731', url: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4047954/' },
+    conditions: 'Colloidal wurtzite CdSe nanocrystals, UV–vis absorption of the diluted stock solution; diameter–wavelength calibration D = 1.6122×10⁻⁹λ⁴ − 2.6575×10⁻⁶λ³ + 1.6242×10⁻³λ² − 0.4277λ + 41.57 (D in nm, λ = first excitonic absorption peak in nm)',
+    match: ['qdMat', 'qdD'],
+    reference: 'Sizing curve of Yu, Qu, Guo & Peng (Chem. Mater. 2003) as quoted in Manthiram et al., J. Vis. Exp. (2013), protocol section',
+    note: 'The retrieved open-access protocol quotes the experimental sizing polynomial of Yu et al. (its reference 17), which gives D = 4.583 nm for a first-exciton peak at 600 nm (2.066 eV); a point on a calibration curve fitted to measurements, not a single measured sample. Compared with the finite-barrier estimate with the default 4 eV barrier (the suite’s separate "empirical" KPI uses the same polynomial and is deliberately not the compared quantity). The model stays within 3 % of the curve between 3.8 and 7 nm; tolerance 5 %.'
+  },
+  {
+    id: 's17-exp-argon-c11-10k', suite: 17, title: 'Solid argon at 10 K: elastic constant C₁₁ from measured phonon dispersion', mode: 'phonon',
+    inputs: { mode: 'phonon', phModel: 'fcc', mdPot: 'Ar', T: 10 },
+    kpi: 'C11', expected: 4.24e9, tol: 0.06, kind: 'experiment',
+    measured: { value: 424e8, uncertainty: 5e8, unit: 'dyn/cm²' },
+    source: { authors: 'Fujii, Lurie, Pynn, Shirane', title: 'Inelastic neutron scattering from solid ³⁶Ar', journal: 'Phys. Rev. B', year: 1974, doi: '10.1103/PhysRevB.10.3647', url: 'https://doi.org/10.1103/PhysRevB.10.3647' },
+    conditions: 'Single crystal of ³⁶Ar at 10 K (lattice constant 5.313 ± 0.002 Å); triple-axis inelastic neutron scattering along [100], [110] and [111]; zero-sound elastic constants from a three-neighbour Born–von Kármán fit',
+    match: ['phModel', 'mdPot'],
+    reference: 'Fujii, Lurie, Pynn & Shirane, Phys. Rev. B 10, 3647 (1974)',
+    note: 'Value stated in the abstract. The suite evaluates the harmonic elastic constants of the 12-6 potential at its static lattice constant (5.25 Å against the measured 5.313 Å) without zero-point or anharmonic corrections; elastic constants do not depend on the isotope mass in this approximation. Tolerance 6 %.'
+  },
+  {
+    id: 's17-exp-argon-c44-10k', suite: 17, title: 'Solid argon at 10 K: elastic constant C₄₄ from measured phonon dispersion', mode: 'phonon',
+    inputs: { mode: 'phonon', phModel: 'fcc', mdPot: 'Ar', T: 10 },
+    kpi: 'C44', expected: 2.25e9, tol: 0.15, kind: 'experiment',
+    measured: { value: 225e8, uncertainty: 1e8, unit: 'dyn/cm²' },
+    source: { authors: 'Fujii, Lurie, Pynn, Shirane', title: 'Inelastic neutron scattering from solid ³⁶Ar', journal: 'Phys. Rev. B', year: 1974, doi: '10.1103/PhysRevB.10.3647', url: 'https://doi.org/10.1103/PhysRevB.10.3647' },
+    conditions: 'Single crystal of ³⁶Ar at 10 K (lattice constant 5.313 ± 0.002 Å); triple-axis inelastic neutron scattering; zero-sound elastic constants from a three-neighbour Born–von Kármán fit',
+    match: ['phModel', 'mdPot'],
+    reference: 'Fujii, Lurie, Pynn & Shirane, Phys. Rev. B 10, 3647 (1974)',
+    note: 'Value stated in the abstract, which also reports C₁₂ = 2.39 GPa. A central pair potential forces the Cauchy relation C₁₂ = C₄₄ (the measurement shows a 6 % violation) and the static lattice is denser than the real crystal, so the computed C₄₄ is 11 % high. Tolerance 15 %, the documented limit of this reduced model.'
   },
 ];

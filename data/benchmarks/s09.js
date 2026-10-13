@@ -227,4 +227,60 @@ export default [
     expected: 1e-11 / (kB * 298.15 / (3 * PI * 8.9e-4 * 2e-5)), tol: 1e-4, kind: 'analytical',
     reference: 'Definition S_T = D_T/D with the Stokes–Einstein diffusivity D = kT/(3πμd)',
   },
+  // ------------------------------------------------------------------ published experiments
+  {
+    id: 's09-exp-pipe-friction-laminar-re113', suite: 9, title: 'Measured laminar pipe friction factor at Re = 113 (Oregon gas-flow tube)', mode: 'channel',
+    inputs: { mode: 'channel', geo: 'pipe', dh: 0.01, Lch: 10, rough: 0, rho: rhoW, mu: muW, Q: qForRe(113.3, 0.01) }, kpi: 'dP',
+    expected: dpFromF(0.5709, 113.3, 0.01, 10) / 1000, tol: 0.05, kind: 'experiment',
+    measured: { value: 0.5709, uncertainty: null, unit: '– (Darcy friction factor λ at Re = 113.3)' },
+    source: { authors: 'McKeon, B. J.; Swanson, C. J.; Zagarola, M. V.; Donnelly, R. J.; Smits, A. J.', title: 'Friction factors for smooth pipe flow', journal: 'J. Fluid Mech.', year: 2004, doi: '10.1017/S0022112004009796', url: 'https://authors.library.caltech.edu/records/qg80n-a5n38' },
+    conditions: 'Fully developed flow of room-temperature gases in the smooth Oregon tube; friction factor λ = −(dP/dx)D/(½ρU²) tabulated against Re = UD/ν',
+    match: ['geo', 'Q', 'dh', 'rho', 'mu', 'rough'],
+    reference: 'McKeon, Swanson, Zagarola, Donnelly & Smits, J. Fluid Mech. 511, 41–44 (2004)',
+    note: 'Value from table 1 (Oregon data: Re = 1.133E+02, λ = 5.709E-01). The comparison is made at equal Reynolds number: for a smooth pipe λ depends on Re only, so the suite is run with water in a 10 mm tube at the flow rate that gives Re = 113.3, and the expected pressure drop is the measured λ applied to that tube. The source states experimental errors of 2 % to 4 % for the Oregon data; the suite uses λ = 64/Re.'
+  },
+  {
+    id: 's09-exp-pipe-friction-superpipe-re31k', suite: 9, title: 'Measured turbulent smooth-pipe friction factor at Re = 3.13×10⁴ (Princeton Superpipe)', mode: 'channel',
+    inputs: { mode: 'channel', geo: 'pipe', dh: 0.05, Lch: 10, rough: 0, rho: rhoW, mu: muW, Q: qForRe(3.131e4, 0.05) }, kpi: 'dP',
+    expected: dpFromF(0.02364, 3.131e4, 0.05, 10) / 1000, tol: 0.03, kind: 'experiment',
+    measured: { value: 0.02364, uncertainty: null, unit: '– (Darcy friction factor λ at Re = 3.131×10⁴)' },
+    source: { authors: 'McKeon, B. J.; Swanson, C. J.; Zagarola, M. V.; Donnelly, R. J.; Smits, A. J.', title: 'Friction factors for smooth pipe flow', journal: 'J. Fluid Mech.', year: 2004, doi: '10.1017/S0022112004009796', url: 'https://authors.library.caltech.edu/records/qg80n-a5n38' },
+    conditions: 'Fully developed turbulent flow of compressed air in the Princeton Superpipe (hydraulically smooth at this Reynolds number)',
+    match: ['geo', 'Q', 'dh', 'rho', 'mu', 'rough'],
+    reference: 'McKeon, Swanson, Zagarola, Donnelly & Smits, J. Fluid Mech. 511, 41–44 (2004)',
+    note: 'Value from table 1 (Princeton data: Re = 3.131E+04, λ = 2.364E-02). Compared at equal Reynolds number with zero wall roughness: the suite is run with water in a 50 mm tube at the flow rate that gives Re = 3.131×10⁴ and the expected pressure drop is the measured λ applied to that tube. The suite uses the Colebrook–White equation, which lies about 1.7 % below this measurement.'
+  },
+  {
+    id: 's09-exp-pipe-friction-superpipe-re1m', suite: 9, title: 'Measured turbulent smooth-pipe friction factor at Re = 1.02×10⁶ (Princeton Superpipe)', mode: 'channel',
+    inputs: { mode: 'channel', geo: 'pipe', dh: 0.05, Lch: 10, rough: 0, rho: rhoW, mu: muW, Q: qForRe(1.024e6, 0.05) }, kpi: 'dP',
+    expected: dpFromF(0.01183, 1.024e6, 0.05, 10) / 1000, tol: 0.03, kind: 'experiment',
+    measured: { value: 0.01183, uncertainty: null, unit: '– (Darcy friction factor λ at Re = 1.024×10⁶)' },
+    source: { authors: 'McKeon, B. J.; Swanson, C. J.; Zagarola, M. V.; Donnelly, R. J.; Smits, A. J.', title: 'Friction factors for smooth pipe flow', journal: 'J. Fluid Mech.', year: 2004, doi: '10.1017/S0022112004009796', url: 'https://authors.library.caltech.edu/records/qg80n-a5n38' },
+    conditions: 'Fully developed turbulent flow of compressed air in the Princeton Superpipe (hydraulically smooth at this Reynolds number)',
+    match: ['geo', 'Q', 'dh', 'rho', 'mu', 'rough'],
+    reference: 'McKeon, Swanson, Zagarola, Donnelly & Smits, J. Fluid Mech. 511, 41–44 (2004)',
+    note: 'Value from table 1 (Princeton data: Re = 1.024E+06, λ = 1.183E-02). Compared at equal Reynolds number with zero wall roughness (water in a 50 mm tube at the flow rate giving Re = 1.024×10⁶; expected pressure drop = measured λ applied to that tube). The Colebrook–White equation used by the suite is known to under-predict smooth-pipe friction slightly at high Reynolds number (about 2 % here).'
+  },
+  {
+    id: 's09-exp-hindered-settling-phi010', suite: 9, title: 'Measured hindered settling of glass spheres in 90 % glycerol, φ = 0.10', mode: 'particle',
+    inputs: { mode: 'particle', rho: 1240, mu: 0.22, dpS: 515e-6, rhoS: 2530, phiS: 0.10 }, kpi: 'vh',
+    expected: 0.648 * 0.847e-3, tol: 0.12, kind: 'experiment',
+    measured: { value: 0.648, uncertainty: 0.061, unit: '– (hindered settling function H = v/v_Stokes)' },
+    source: { authors: 'Brzinski III, T. A.; Durian, D. J.', title: 'The Hindered Settling Function at Low Re Has Two Branches', journal: 'Phys. Rev. Fluids', year: 2018, doi: '10.1103/PhysRevFluids.3.124303', url: 'https://arxiv.org/abs/1710.09314' },
+    conditions: 'Monodisperse soda-lime glass spheres (density 2.53 g/mL, median diameters 180–1000 µm) settling in 90 wt% aqueous glycerol (viscosity 2.20 g/(cm·s), density 1.24 g/mL); speed of the supernatant–suspension interface at volume fraction 0.10',
+    match: ['rho', 'mu', 'dpS', 'rhoS', 'phiS'],
+    reference: 'Brzinski & Durian, Phys. Rev. Fluids 3, 124303 (2018)',
+    note: 'H = 0.648 ± 0.061 is the mean and standard deviation over the four sphere sizes in Table III; the expected velocity is H times the Stokes speed 0.847 mm/s tabulated for the 515 µm spheres in Table II (fluid and particle properties from the Table II caption). The suite applies a Richardson–Zaki exponent of about 4.65, which gives H ≈ 0.61; the tolerance covers the reported scatter of H.'
+  },
+  {
+    id: 's09-exp-hindered-settling-phi031', suite: 9, title: 'Measured hindered settling of glass spheres in 90 % glycerol, φ = 0.31', mode: 'particle',
+    inputs: { mode: 'particle', rho: 1240, mu: 0.22, dpS: 515e-6, rhoS: 2530, phiS: 0.31 }, kpi: 'vh',
+    expected: 0.189 * 0.847e-3, tol: 0.15, kind: 'experiment',
+    measured: { value: 0.189, uncertainty: 0.022, unit: '– (hindered settling function H = v/v_Stokes)' },
+    source: { authors: 'Brzinski III, T. A.; Durian, D. J.', title: 'The Hindered Settling Function at Low Re Has Two Branches', journal: 'Phys. Rev. Fluids', year: 2018, doi: '10.1103/PhysRevFluids.3.124303', url: 'https://arxiv.org/abs/1710.09314' },
+    conditions: 'Monodisperse soda-lime glass spheres (density 2.53 g/mL, median diameters 180–1000 µm) settling in 90 wt% aqueous glycerol (viscosity 2.20 g/(cm·s), density 1.24 g/mL); speed of the supernatant–suspension interface at volume fraction 0.31',
+    match: ['rho', 'mu', 'dpS', 'rhoS', 'phiS'],
+    reference: 'Brzinski & Durian, Phys. Rev. Fluids 3, 124303 (2018)',
+    note: 'H = 0.189 ± 0.022 from Table III (mean and standard deviation over four sphere sizes); expected velocity = H × 0.847 mm/s (Stokes speed of the 515 µm spheres, Table II). The tolerance reflects the 12 % scatter of the measured H plus the empirical Richardson–Zaki exponent of the suite.'
+  },
 ];

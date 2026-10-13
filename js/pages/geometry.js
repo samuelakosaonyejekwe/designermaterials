@@ -65,7 +65,8 @@ export async function geometryPage(root) {
     const go = async () => { await ready; const g1 = gen, v1 = { ...vals }; try { const t0 = performance.now(), g = await g1.run(v1); out.prepend(geomCard(g, g1.name, importer)); toast(`Generated in ${fmt(performance.now() - t0, 3)} ms`, 'ok'); } catch (e) { toast('Generation failed: ' + e.message, 'bad', 7000); } };
     build(); return h('div', form, h('div.card.note', icon('info', 16), h('p', 'Geometry is created from parameters, crystal data, statistics or mathematical surfaces — nothing is drawn by hand. Simulations that grow material (Suites 7 and 21) return geometry that changes with simulation time.'))); };
   const importTab = () => { const rep = h('div');
-    const handle = async files => { for (const f of files) { try { const bytes = await fileBytes(f); if (/\.(png|jpe?g|bmp|gif|webp)$/i.test(f.name)) { await fromImage(f); continue; } const r = await importer.importFile({ name: f.name, bytes }, {}); r.report.provenance.importedAt = new Date().toISOString();
+    const handle = async files => { files = [...files]; const all = []; for (const f of files) { try { all.push({ name: f.name, bytes: await fileBytes(f) }); } catch { /* reported below */ } }
+      for (const f of files) { try { const bytes = all.find(a => a.name === f.name)?.bytes || await fileBytes(f); if (/\.(png|jpe?g|bmp|gif|webp)$/i.test(f.name)) { await fromImage(f); continue; } const r = await importer.importFile({ name: f.name, bytes }, { siblings: all.filter(a => a.name !== f.name) }); r.report.provenance.importedAt = new Date().toISOString();
         const R = r.report, li = (t, a, cls) => a && a.length ? h('div', h('h5', t), h('ul.tight' + (cls || ''), a.map(x => h('li', typeof x === 'string' ? x : h('span', { class: x.pass === false || x.ok === false ? 'no' : 'ok' }, x.name ? `${x.name}: ${x.detail}` : `Suite ${x.suiteId} (${spec.suites[x.suiteId - 1]?.name}): ${x.ok ? 'suitable' : 'not suitable'} — ${x.why}`))))) : null;
         rep.prepend(h('div.card', h('div.row.between.wrap', h('h3', f.name), h('div.taglist', h('span.tag.k', r.format.name), h('span.tag', { class: 'sup-' + (r.geometry ? r.format.support : 'inventory') }, r.geometry ? { full: 'Fully imported', partial: 'Partly imported', inventory: 'Geometry recovered' }[r.format.support] : r.format.support === 'inventory' ? 'Recognised — inventory only' : 'Not readable — see report'), h('span.tag', r.format.representation), h('span.tag', `${fmt(bytes.length / 1024, 3)} kB`))), h('p.muted', `Detected by ${r.detection.why} (confidence ${fmt(r.detection.confidence, 2)}). ${r.format.note || ''}`), h('div.two', li('What was imported', R.imported), li('Assumptions made', R.assumptions), li('Information not preserved', R.lost), li('Validation', R.validation), li('Repairs applied', R.repairs), li('Suitability for simulation', R.suitability))));
         const X = r.extra || {}, more = [];
@@ -73,6 +74,7 @@ export async function geometryPage(root) {
         if (X.kernel) more.push(h('p.muted', `Geometry kernel: ${typeof X.kernel === 'string' ? X.kernel : [X.kernel.name, X.kernel.version].filter(Boolean).join(' ')}`));
         if (X.parts?.length) more.push(h('details', h('summary', `Bodies / parts (${X.parts.length})`), table(['Name', 'Closed', 'Area', 'Volume'], X.parts.slice(0, 200).map(q => [q.name || '—', q.closed === undefined ? '—' : String(q.closed), q.area ?? '—', q.volume ?? '—']))));
         if (X.embedded?.length) more.push(h('p.muted', `Embedded data streams recovered: ${X.embedded.map(q => q.name || q.kind || 'stream').slice(0, 6).join(', ')}. These are kept intact but need the originating CAD kernel to evaluate.`));
+        if (X.configurations?.length) more.push(h('div', h('h5', `Configurations in this file (${X.configurations.length})`), h('div.taglist', X.configurations.map(c => h('button.chip', { disabled: !c.geometry, title: c.geometry ? 'Show this configuration' : 'Geometry of this configuration was not tessellated', onclick: () => rep.firstChild.after(geomCard(c.geometry, `${f.name} — ${c.name || 'configuration'}`, importer)) }, c.name || 'configuration')))));
         if (more.length) rep.firstChild.append(...more);
         if (r.geometry) { if (r.extra?.frames?.length && !r.geometry.frames) r.geometry.frames = r.extra.frames.slice(0, 40); rep.firstChild.after(geomCard(r.geometry, f.name, importer)); }
       } catch (e) { rep.prepend(h('div.card.error', h('h3', f.name), h('p', e.message))); } } };
@@ -82,7 +84,58 @@ export async function geometryPage(root) {
     return h('div', h('div.card', drop, h('p.hint', 'Files are read on this device only — nothing is uploaded. The format is identified from the file’s signature and structure, not just its extension. Scripts (.scad, .geo, .py) are parsed, never executed.')), rep); };
   const projTab = () => h('div', project.geometry.length ? project.geometry.map(g => geomCard(g.geometry, g.name, importer)) : h('div.card', h('p.muted', 'No geometry saved in this project yet. Generate, import, or send geometry from a suite result.')));
   const fmtTab = () => { const q = h('input', { type: 'search', placeholder: 'Filter formats (e.g. step, cif, gds, voxel)…' }), body = h('div'); const F = importer.FORMATS, draw = () => { const s = q.value.toLowerCase(), items = F.filter(f => !s || (f.name + ' ' + f.ext.join(' ') + ' ' + f.family + ' ' + f.representation).toLowerCase().includes(s)); body.replaceChildren(h('p.muted', `${items.length} of ${F.length} formats · ${F.filter(f => f.support === 'full').length} fully imported · ${F.filter(f => f.support === 'partial').length} partly · ${F.filter(f => f.support === 'inventory').length} recognised with inventory and conversion guidance`), table(['Format', 'Extensions', 'Family', 'Represents', 'Priority', 'Import depth', 'Typical suites', 'Notes'], items.map(f => [f.name, f.ext.join(' '), f.family, f.representation, f.priority, h('span.tag', { class: 'sup-' + f.support }, f.support), (f.suites || []).join(', '), f.note || '']), { max: 600 })); }; q.addEventListener('input', draw); draw();
-    return h('div', h('div.card', h('h3', 'Accepted geometry formats'), q, body), h('div.card', h('h3', 'What the importer does'), h('ol.caps', spec.formats.importerCaps.map(c => h('li', h('b', c.name + ': '), c.text)))), h('div.card', h('h3', 'When geometry is needed'), table(['Engineering activity', 'Geometry requirement'], WHEN)), h('div.card', h('h3', 'Format families in the specification'), spec.formats.families.map(f => h('details', h('summary', `${f.id}. ${f.title}`), table(f.header || [], f.rows), f.notes.map(n => h('p.muted', n)))))); };
+    const SCRIPTS = {
+      'SOLIDWORKS (VBA macro)': ['export_step.swp.bas', (dir) => `' Exports every part and assembly in a folder to STEP. Run in SOLIDWORKS: Tools > Macro > New, paste, run.
+Dim swApp As Object
+Sub main()
+    Dim folder As String, f As String, model As Object, errs As Long, warns As Long, docType As Long
+    Set swApp = Application.SldWorks
+    folder = "${dir}"
+    f = Dir(folder & "\\*.sld*")
+    Do While f <> ""
+        If LCase(Right(f, 6)) = "sldprt" Or LCase(Right(f, 6)) = "sldasm" Then
+            docType = IIf(LCase(Right(f, 6)) = "sldprt", 1, 2)
+            Set model = swApp.OpenDoc6(folder & "\\" & f, docType, 1, "", errs, warns)
+            If Not model Is Nothing Then
+                model.Extension.SaveAs folder & "\\" & Left(f, Len(f) - 7) & ".step", 0, 1, Nothing, errs, warns
+                swApp.CloseDoc model.GetTitle
+            End If
+        End If
+        f = Dir
+    Loop
+End Sub`],
+      'Autodesk Inventor (VBA)': ['export_step_inventor.bas', (dir) => `' Exports every part and assembly in a folder to STEP. Run in Inventor: Tools > VBA Editor, paste into a module, run.
+Sub ExportFolderToStep()
+    Dim folder As String, f As String, doc As Document
+    folder = "${dir}"
+    f = Dir(folder & "\\*.i*")
+    Do While f <> ""
+        If LCase(Right(f, 4)) = ".ipt" Or LCase(Right(f, 4)) = ".iam" Then
+            Set doc = ThisApplication.Documents.Open(folder & "\\" & f, False)
+            doc.SaveAs folder & "\\" & Left(f, Len(f) - 4) & ".stp", True
+            doc.Close True
+        End If
+        f = Dir
+    Loop
+End Sub`],
+      'CATIA V5 (CATScript)': ['export_step.CATScript', (dir) => `' Exports every CATPart and CATProduct in a folder to STEP. Run in CATIA: Tools > Macro > Macros, create, paste, run.
+Sub CATMain()
+    Dim fso, folder, file, doc, base
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set folder = fso.GetFolder("${dir}")
+    For Each file In folder.Files
+        If LCase(fso.GetExtensionName(file.Name)) = "catpart" Or LCase(fso.GetExtensionName(file.Name)) = "catproduct" Then
+            Set doc = CATIA.Documents.Open(file.Path)
+            base = folder.Path & "\\" & fso.GetBaseName(file.Name)
+            doc.ExportData base, "stp"
+            doc.Close
+        End If
+    Next
+End Sub`],
+    };
+    const prod = h('select', Object.keys(SCRIPTS).map(k => h('option', k))), dir = h('input', { type: 'text', value: 'C:\\CAD\\to_export', spellcheck: false }), pre = h('pre'), showScript = () => { pre.textContent = SCRIPTS[prod.value][1](dir.value.replace(/\\+$/, '')); }; prod.onchange = dir.oninput = showScript; showScript();
+    const helper = h('div.card', h('h3', 'Batch export from closed CAD systems'), h('p', 'CATIA, Creo and some other systems store geometry in undocumented proprietary form that only their own kernel can evaluate. If you have the CAD system, this generates a script that makes it export a whole folder to STEP, which then imports here in full. For Creo use File › Save As › STEP, or its batch utility.'), h('div.fields', h('div.field', h('label', 'CAD system'), prod), h('div.field', h('label', 'Folder containing the files'), dir)), pre, h('div.row.wrap', h('button.btn.sm', { onclick: () => download(SCRIPTS[prod.value][0], pre.textContent, 'text/plain') }, icon('download', 14), ' Save script'), h('span.hint', 'Generated from each product’s documented automation interface. It has not been executed by this app — review it before running.')));
+    return h('div', h('div.card', h('h3', 'Accepted geometry formats'), q, body), helper, h('div.card', h('h3', 'What the importer does'), h('ol.caps', spec.formats.importerCaps.map(c => h('li', h('b', c.name + ': '), c.text)))), h('div.card', h('h3', 'When geometry is needed'), table(['Engineering activity', 'Geometry requirement'], WHEN)), h('div.card', h('h3', 'Format families in the specification'), spec.formats.families.map(f => h('details', h('summary', `${f.id}. ${f.title}`), table(f.header || [], f.rows), f.notes.map(n => h('p.muted', n)))))); };
   root.append(h('header.pagehead', h('h1', 'Geometry Studio'), h('p.lead', 'Import geometry from CAD, crystallographic and nanofabrication software, generate it from parameters, or derive it by inverse design — over four specialised geometry engines with one interface.')),
     h('div.ways', h('div.way', icon('upload', 22), h('b', 'Import'), h('span', 'Existing geometry in established formats')), h('div.way', icon('cube', 22), h('b', 'Generate'), h('span', 'Dimensions, crystal data, unit cells, statistics')), h('a.way', { href: '#/suite/25' }, icon('target', 22), h('b', 'Inverse design'), h('span', 'Candidate geometry from target properties'))),
     tabs([{ label: 'Generate', render: genTab }, { label: 'Import', render: importTab }, { label: 'Project geometry', render: projTab, fresh: true, count: project.geometry.length || null }, { label: 'Formats', render: fmtTab }]), out);

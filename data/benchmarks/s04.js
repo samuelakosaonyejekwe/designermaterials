@@ -192,4 +192,16 @@ export default [
     inputs: { mode: 'film', featAR: 20 }, kpi: 'ald', expected: 1 + 19 / 4 * 20 + 1.5 * 400, tol: 1e-9, kind: 'analytical',
     reference: 'Gordon, Hausmann, Kim & Shepard kinetic model of conformal ALD in narrow holes: exposure ∝ 1 + (19/4)a + (3/2)a²',
   },
+  // ------------------------------------------------------------------ published experiments
+  {
+    id: 's04-exp-rsa-random-parking-limit', suite: 4, title: 'Measured random-parking (jamming) limit of spheres adsorbed on a plane', mode: 'aggregate',
+    inputs: { mode: 'aggregate', aggType: 'rsa', rsaL: 60, rsaTau: 400, seed: 1 }, kpi: 'thInf',
+    expected: 0.55, tol: 0.03, kind: 'experiment',
+    measured: { value: 0.55, uncertainty: 0.01, unit: '– (area fraction)' },
+    source: { authors: 'Onoda, G. Y.; Liniger, E. G.', title: 'Experimental determination of the random-parking limit in two dimensions', journal: 'Phys. Rev. A', year: 1986, doi: '10.1103/PhysRevA.33.715', url: 'https://journals.aps.org/pra/abstract/10.1103/PhysRevA.33.715' },
+    conditions: 'Spherical colloidal particles adsorbing irreversibly, without overlap, on a flat substrate until no further particle fits; covered area fraction measured',
+    match: ['aggType'],
+    reference: 'Onoda & Liniger, Phys. Rev. A 33, 715 (1986)',
+    note: 'Value 0.55 ± 0.01 from the abstract. The suite runs a seeded random sequential adsorption of discs on the largest domain (60 × 60 diameters, 400 attempts per disc area) and extrapolates to the jamming limit with Feder\'s law; realisation scatter is about ±0.005, so the tolerance is the experimental uncertainty plus that scatter.',
+  },
 ];

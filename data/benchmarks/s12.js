@@ -42,8 +42,9 @@ const epsPerpRe = (() => { const dr = (1 - fm) * emRe + fm, di = (1 - fm) * emIm
 
 const BRAGG = { mode: 'multilayer', stack: 'bragg', matH: 'custom', n_user: 2, k_user: 0, matL: 'air', substrate: 'air', Nper: 3, lam0: 550, lam_min: 350, lam_max: 900, theta: 0, n_inc: 1, dH: 0, dL: 0 };
 const BARE = { mode: 'multilayer', stack: 'film', matH: 'air', substrate: 'custom', n_user: 1.5, k_user: 0, n_inc: 1, lam0: 550, dH: 0 };
-const WIRE = { mode: 'neg_eps', medium: 'wire', wire_r: 1, wire_a: 5, metal_sigma: 3.7e7 };
-const SRR = { mode: 'neg_mu', srr_r: 2, srr_a: 5, srr_c: 1, srr_d: 0.1, srr_l: 2, srr_t: 35, metal_sigma: 5.8e7 };
+const ellK = k => { let x = 1, y = Math.sqrt(1 - k * k); for (let i = 0; i < 60; i++) { const t = (x + y) / 2; y = Math.sqrt(x * y); x = t; } return Math.PI / (2 * x); };   // complete elliptic integral K(k), arithmetic–geometric mean
+const WIRE = { mode: 'neg_eps', medium: 'wire', wire_model: 'pendry', wire_r: 1, wire_a: 5, metal_sigma: 3.7e7 };
+const SRR = { mode: 'neg_mu', srr_type: 'cylinder', srr_r: 2, srr_a: 5, srr_c: 1, srr_d: 0.1, srr_l: 2, srr_t: 35, metal_sigma: 5.8e7 };
 const MATCHED = { mode: 'nim', fep: 10 * Math.SQRT2, f0m: 10 * Math.sqrt(0.75), Fm: 0.5, f_probe: 10, ge: 0.0001, gm: 0.0001, d_slab: 10, theta: 30 };
 const NIM_LOWLOSS = { mode: 'nim', fep: 12.8, f0m: 10, Fm: 0.3, f_probe: 11, ge: 0.0001, gm: 0.0001, d_slab: 10, theta: 0 };
 
@@ -125,8 +126,33 @@ export default [
     inputs: { mode: 'neg_eps', medium: 'Al' }, kpi: 'f_enz', expected: 15.0 * 241.79893, tol: 0.03, kind: 'reference-data',
     reference: 'Kittel, Introduction to Solid State Physics — volume plasmon energy of aluminium, about 15 eV (electron energy loss)',
     note: 'KPI in THz (1 eV = 241.799 THz). The suite uses a single free-electron Drude term fitted to infrared data, which places the crossover within 2 % of the measured plasmon energy.' },
+  { id: 's12-wire-plasma-quasistatic-formula', suite: 12, title: 'Wire medium: quasi-static lattice-sum formula ω_p² = 2πc²/(a² [ln(a/(2πr)) + 0.5275])', mode: 'neg_eps',
+    inputs: { ...WIRE, wire_model: 'belov', wire_r: 50, wire_a: 5 }, kpi: 'fp', expected: C0 * Math.sqrt(2 * PI / (Math.log(5e-3 / (2 * PI * 50e-6)) + 0.5275)) / 5e-3 / (2 * PI) / 1e9, tol: 1e-5, kind: 'analytical',
+    reference: 'Belov, Tretyakov & Viitanen, "Dispersion and reflection properties of artificial media formed by regular lattices of ideally conducting wires" (J. Electromagn. Waves Appl.); Maslovski, Tretyakov & Belov, wire media with negative effective permittivity (Microw. Opt. Technol. Lett.)',
+    note: '50 µm wires on a 5 mm lattice (r/a = 0.01): 13.3 GHz.' },
+  { id: 's12-wire-plasma-lattice-sum-thin-limit', suite: 12, title: 'Wire medium: the dynamic lattice sum tends to the quasi-static formula for very thin wires', mode: 'neg_eps',
+    inputs: { ...WIRE, wire_model: 'lattice', wire_r: 0.01, wire_a: 5 }, kpi: 'fp', expected: C0 * Math.sqrt(2 * PI / (Math.log(5e-3 / (2 * PI * 1e-8)) + 0.5275)) / 5e-3 / (2 * PI) / 1e9, tol: 0.002, kind: 'analytical',
+    reference: 'Thin-wire limit of the lattice sum (Belov, Tretyakov & Viitanen; Maslovski, Tretyakov & Belov)',
+    note: 'r/a = 2×10⁻⁶, ω_p a/c = 0.73: the dynamic correction to the quasi-static value is of order 0.05 %. Pendry\'s original formula gives a value 5 % lower for the same wires.' },
+  { id: 's12-wire-plasma-thick-wires-full-wave', suite: 12, title: 'Thick-wire lattice (r/a = 0.1, a = 8 mm): plasma frequency against a published full-wave simulation', mode: 'neg_eps',
+    inputs: { ...WIRE, wire_model: 'lattice', wire_r: 800, wire_a: 8, metal_sigma: 5.8e7 }, kpi: 'fp', expected: 13, tol: 0.1, kind: 'numerical-reference',
+    reference: 'Smith, Padilla, Vier, Nemat-Nasser & Schultz, Phys. Rev. Lett. 84, 4184 (2000) — eigenmode-solver result for wires of radius 0.8 mm on an 8.0 mm lattice: "For the wires alone, a gap extends from zero frequency to ω_p, at 13 GHz"',
+    note: 'Dynamic lattice sum (monopole order): 14.07 GHz, +8 %. Pendry\'s thin-wire formula gives 9.85 GHz (−24 %) and the quasi-static formula 15.0 GHz (+15 %) for these thick wires. The transmission experiment of the same paper reports that "wires alone had a plasma frequency of 12 GHz", 17 % below the lattice sum; the wire radius used in the experiment is not stated and the array was eight elements deep in a parallel-plate chamber, so that value is not offered as an experiment entry.' },
 
   // ------------------------------------------------------------------ negative permeability
+  { id: 's12-srr-planar-narrow-ring-limit', suite: 12, title: 'Planar split rings without substrate: LC resonance in the narrow-ring limit', mode: 'neg_mu',
+    inputs: { mode: 'neg_mu', srr_type: 'planar', srr_r: 10, srr_c: 0.2, srr_d: 0.2, srr_a: 60, srr_l: 30, srr_epsr: 1, srr_h: 0.25, srr_t: 35, metal_sigma: 5.8e7 }, kpi: 'f0',
+    expected: (() => { const r0 = 10.3e-3, k = 0.2 / 0.6, L = MU0 * r0 * (Math.log(8 * r0 / 0.2e-3) - 0.5), Cp = EPS0 * ellK(Math.sqrt(1 - k * k)) / ellK(k); return 1 / (2 * PI * Math.sqrt(L * PI * r0 * Cp / 2)) / 1e9; })(), tol: 0.005, kind: 'analytical',
+    reference: 'Quasi-static LC model of the edge-coupled split-ring resonator (Marqués, Mesa, Martel & Medina, IEEE Trans. Antennas Propag. 51, 2572, 2003): ω₀² = 2/(π r₀ C′ L), with the thin-tape loop inductance µ₀r₀[ln(8r₀/c) − ½] and the coplanar-strip capacitance C′ = ε₀K(k′)/K(k), k = d/(d + 2c)',
+    note: 'Rings 0.2 mm wide with a 0.2 mm gap at 10.3 mm mean radius (c/r₀ = 0.02), no substrate. The suite integrates the filament mutual inductance across the ring width; the closed form used here is its narrow-ring asymptote, hence the 0.5 % tolerance.' },
+  { id: 's12-exp-smith-split-ring-resonance', suite: 12, title: 'Printed copper double split ring (r = 1.5, c = 0.8, d = 0.2 mm): measured magnetic resonance', mode: 'neg_mu',
+    inputs: { mode: 'neg_mu', srr_type: 'planar', srr_r: 1.5, srr_c: 0.8, srr_d: 0.2, srr_a: 8, srr_l: 8, srr_epsr: 4.4, srr_h: 0.25, srr_t: 35, metal_sigma: 5.8e7 }, kpi: 'f0', expected: 4.845, tol: 0.1, kind: 'experiment',
+    measured: { value: 4.845, uncertainty: null, unit: 'GHz' },
+    source: { authors: 'Smith, D. R.; Padilla, W. J.; Vier, D. C.; Nemat-Nasser, S. C.; Schultz, S.', title: 'Composite Medium with Simultaneously Negative Permeability and Permittivity', journal: 'Phys. Rev. Lett. 84, 4184–4187', year: 2000, doi: '10.1103/PhysRevLett.84.4184', url: 'https://doi.org/10.1103/PhysRevLett.84.4184' },
+    conditions: 'Individual copper split-ring resonator made on commercial printed-circuit board, ring width c = 0.8 mm, gap between rings d = 0.2 mm, inner radius r = 1.5 mm; microwave resonance curve, Q > 600; arrays on an 8.0 mm square lattice',
+    match: ['srr_r', 'srr_c', 'srr_d', 'srr_a'],
+    reference: 'Smith, Padilla, Vier, Nemat-Nasser & Schultz, Phys. Rev. Lett. 84, 4184 (2000), Fig. 1',
+    note: 'Caption of Fig. 1: "c = 0.8 mm, d = 0.2 mm, and r = 1.5 mm. The SRR has its resonance at about 4.845 GHz, and the quality factor has been measured to be Q > 600". The planar quasi-static LC model gives 4.66 GHz (−3.8 %) and an ohmic Q of about 1050 (an upper limit: dielectric and radiation loss are not modelled). The source does not specify the laminate or the copper thickness: a thin FR-4/G-10-type board (ε_r = 4.4, 0.25 mm) and 35 µm copper are ASSUMED. The result depends on that assumption — 3.94 GHz for a 1.6 mm board, 5.35 GHz for 0.1 mm, 6.43 GHz without substrate — and the 10 % tolerance reflects it. The stacking distance is taken equal to the lattice spacing (it does not enter the resonance). Pendry\'s formula for densely stacked rings, which the suite used before for this geometry, gives 49.8 GHz.' },
   { id: 's12-srr-resonance', suite: 12, title: 'Split-ring medium: magnetic resonance frequency', mode: 'neg_mu',
     inputs: { ...SRR }, kpi: 'f0', expected: f0Srr / 1e9, tol: 1e-5, kind: 'analytical',
     reference: 'Pendry, Holden, Robbins & Stewart, "Magnetism from conductors and enhanced nonlinear phenomena" — ω₀² = 3lc²/(π ln(2c/d) r³)',
@@ -243,4 +269,29 @@ export default [
   { id: 's12-metalens-airy-radius', suite: 12, title: 'Metalens diffraction-limited spot: Airy radius 0.61λ/NA', mode: 'metasurface',
     inputs: { mode: 'metasurface', ms_kind: 'lens', lam0: 632.8, lens_D: 200, lens_f: 75, n_t: 1 }, kpi: 'airy', expected: 0.61 * 632.8 / 0.8, tol: 1e-6, kind: 'analytical',
     reference: 'Born & Wolf, Principles of Optics — Airy pattern of a circular aperture (first zero at 0.61λ/NA)' },
+  // ------------------------------------------------------------------ published experiments
+  { id: 's12-exp-nist-rm8011-gold-10nm-lspr', suite: 12, title: 'NIST RM 8011 gold nanoparticles (TEM diameter 8.9 nm) in water: measured plasmon peak', mode: 'mie',
+    inputs: { mode: 'mie', mat_p: 'Au', d_p: 8.9, n_med: 1.33, lam_min: 400, lam_max: 700 }, kpi: 'lam_peak', expected: 517, tol: 0.015, kind: 'experiment',
+    measured: { value: 517, uncertainty: null, unit: 'nm' },
+    source: { authors: 'National Institute of Standards and Technology', title: 'Report of Investigation, Reference Material 8011: Gold Nanoparticles (Nominal 10 nm Diameter)', journal: 'NIST Report of Investigation', year: 2021, doi: null, url: 'https://tsapps.nist.gov/srmext/certificates/archives/8011.pdf' },
+    conditions: 'Citrate-stabilised gold nanoparticles in aqueous suspension, as supplied; double-beam spectrophotometer, 10 mm quartz cuvette against deionised water, slit width 1 nm; mean diameter by TEM 8.9 ± 0.1 nm',
+    match: ['mat_p', 'd_p', 'n_med'],
+    reference: 'NIST Report of Investigation RM 8011, Gold Nanoparticles (Nominal 10 nm Diameter), revision of 29 June 2021',
+    note: 'Peak wavelength as labelled on Figure 1 (representative optical absorbance spectrum); diameter from Table 1 (TEM reference value). Sphere of the TEM diameter in water (n = 1.33); the citrate layer, the size distribution and the clusters reported for this material are not modelled. Tolerance ±1.5 % (about ±8 nm), in line with the ±10 nm the suite states for its Lorentz–Drude gold permittivity.' },
+  { id: 's12-exp-nist-rm8012-gold-30nm-lspr', suite: 12, title: 'NIST RM 8012 gold nanoparticles (TEM diameter 27.6 nm) in water: measured plasmon peak', mode: 'mie',
+    inputs: { mode: 'mie', mat_p: 'Au', d_p: 27.6, n_med: 1.33, lam_min: 400, lam_max: 700 }, kpi: 'lam_peak', expected: 524, tol: 0.015, kind: 'experiment',
+    measured: { value: 524, uncertainty: null, unit: 'nm' },
+    source: { authors: 'National Institute of Standards and Technology', title: 'Report of Investigation, Reference Material 8012: Gold Nanoparticles, Nominal 30 nm Diameter', journal: 'NIST Report of Investigation', year: 2015, doi: null, url: 'https://tsapps.nist.gov/srmext/certificates/archives/8012.pdf' },
+    conditions: 'Citrate-stabilised gold nanoparticles in aqueous suspension, as supplied; double-beam spectrophotometer, 10 mm quartz cuvette against deionised water, slit width 1 nm; mean diameter by TEM 27.6 ± 2.1 nm',
+    match: ['mat_p', 'd_p', 'n_med'],
+    reference: 'NIST Report of Investigation RM 8012, Gold Nanoparticles, Nominal 30 nm Diameter, revision of 24 July 2015',
+    note: 'Peak wavelength as labelled on Figure 1 (representative optical absorbance spectrum); diameter from Table 1 (TEM reference value). Sphere of the TEM diameter in water (n = 1.33); citrate layer and size distribution not modelled. Tolerance ±1.5 % (about ±8 nm).' },
+  { id: 's12-exp-nist-rm8013-gold-60nm-lspr', suite: 12, title: 'NIST RM 8013 gold nanoparticles (TEM diameter 56.0 nm) in water: measured plasmon peak', mode: 'mie',
+    inputs: { mode: 'mie', mat_p: 'Au', d_p: 56.0, n_med: 1.33, lam_min: 400, lam_max: 700 }, kpi: 'lam_peak', expected: 532, tol: 0.015, kind: 'experiment',
+    measured: { value: 532, uncertainty: null, unit: 'nm' },
+    source: { authors: 'National Institute of Standards and Technology', title: 'Report of Investigation, Reference Material 8013: Gold Nanoparticles, Nominal 60 nm Diameter', journal: 'NIST Report of Investigation', year: 2015, doi: null, url: 'https://tsapps.nist.gov/srmext/certificates/archives/8013.pdf' },
+    conditions: 'Citrate-stabilised gold nanoparticles in aqueous suspension, as supplied; double-beam spectrophotometer, 10 mm quartz cuvette against deionised water, slit width 1 nm; mean diameter by TEM 56.0 ± 0.5 nm',
+    match: ['mat_p', 'd_p', 'n_med'],
+    reference: 'NIST Report of Investigation RM 8013, Gold Nanoparticles, Nominal 60 nm Diameter, revision of 24 July 2015',
+    note: 'Peak wavelength as labelled on Figure 1 (representative optical absorbance spectrum); diameter from Table 1 (TEM reference value). Sphere of the TEM diameter in water (n = 1.33); citrate layer and size distribution not modelled. Tolerance ±1.5 % (about ±8 nm).' },
 ];

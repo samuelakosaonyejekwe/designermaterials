@@ -177,12 +177,25 @@ export default [
     id: 's05-wire-medium-pendry', suite: 5, title: 'Thin-wire medium: Pendry’s leading-order plasma frequency for his example (a = 5 mm, r = 1 µm)', mode: 'resonant',
     inputs: { mode: 'resonant', resType: 'wire', cell: 5e-3, wireR: 1e-6, epsH: 1 }, kpi: 'fp_pendry', expected: 8.2e9, tol: 0.005, kind: 'reference-data',
     reference: 'Pendry, Holden, Stewart & Youngs, extremely low frequency plasmons in metallic mesostructures: ω_p² = 2πc²/(a² ln(a/r)), about 8.2 GHz for 1 µm wires on a 5 mm lattice',
-    note: 'Like-for-like comparison: the KPI fp_pendry is the leading-order formula quoted in the reference. The suite’s main value (KPI fp) uses the refined Belov–Tretyakov–Viitanen logarithm ln(a/(2πr)) + 0.5275, which lies 8.7 % higher for this geometry and is checked separately in s05-wire-medium-refined.',
+    note: 'Like-for-like comparison: the KPI fp_pendry is the leading-order formula quoted in the reference. The suite’s main value (KPI fp) is the dynamic lattice sum, which lies 8.6 % higher for this geometry; its quasi-static limit, ln(a/(2πr)) + 0.5275 (KPI fp_qs), is checked separately in s05-wire-medium-refined.',
   },
   {
-    id: 's05-wire-medium-refined', suite: 5, title: 'Thin-wire medium: refined plasma frequency', mode: 'resonant',
-    inputs: { mode: 'resonant', resType: 'wire', cell: 5e-3, wireR: 1e-4, epsH: 1 }, kpi: 'fp', expected: fpBelov(5e-3, 1e-4), tol: 1e-4, kind: 'analytical',
+    id: 's05-wire-medium-refined', suite: 5, title: 'Thin-wire medium: quasi-static lattice-sum plasma frequency', mode: 'resonant',
+    inputs: { mode: 'resonant', resType: 'wire', cell: 5e-3, wireR: 1e-4, epsH: 1 }, kpi: 'fp_qs', expected: fpBelov(5e-3, 1e-4), tol: 1e-4, kind: 'analytical',
     reference: 'Belov, Tretyakov & Viitanen, dispersion and reflection properties of artificial media formed by regular lattices of ideally conducting wires: ω_p² = 2πc²/(a²[ln(a/(2πr)) + 0.5275])',
+    note: 'This closed form was the suite’s main value before; the main value (KPI fp) is now the dynamic lattice sum, which is valid for thick wires as well, and the closed form is reported as the KPI fp_qs. The benchmark was re-pointed accordingly; for this geometry (r/a = 0.02) the two differ by 1.1 %.',
+  },
+  {
+    id: 's05-wire-medium-dynamic-thin-limit', suite: 5, title: 'Wire medium: the dynamic lattice sum tends to the quasi-static formula for very thin wires', mode: 'resonant',
+    inputs: { mode: 'resonant', resType: 'wire', cell: 5e-3, wireR: 5e-9, epsH: 1 }, kpi: 'fp', expected: fpBelov(5e-3, 5e-9), tol: 0.002, kind: 'analytical',
+    reference: 'Thin-wire limit of the reciprocal-lattice sum (Belov, Tretyakov & Viitanen)',
+    note: 'r/a = 10⁻⁶: the dynamic correction to the quasi-static value is below 0.1 %.',
+  },
+  {
+    id: 's05-wire-medium-thick-full-wave', suite: 5, title: 'Thick-wire lattice (r/a = 0.1, a = 8 mm): plasma frequency against a published full-wave simulation', mode: 'resonant',
+    inputs: { mode: 'resonant', resType: 'wire', cell: 8e-3, wireR: 8e-4, epsH: 1 }, kpi: 'fp', expected: 13e9, tol: 0.1, kind: 'numerical-reference',
+    reference: 'Smith, Padilla, Vier, Nemat-Nasser & Schultz, Phys. Rev. Lett. 84, 4184 (2000): eigenmode-solver result for wires of radius 0.8 mm on an 8.0 mm lattice, gap from zero frequency to ω_p at 13 GHz',
+    note: 'Dynamic lattice sum 14.07 GHz (+8 %); the quasi-static closed form gives 15.0 GHz (+15 %) and the leading-logarithm form 9.85 GHz (−24 %). The transmission experiment of the same paper quotes 12 GHz for its wire array (wire radius not stated).',
   },
   {
     id: 's05-srr-lc-resonance', suite: 5, title: 'Split ring loaded with a 100 pF capacitor: L–C resonance', mode: 'resonant',

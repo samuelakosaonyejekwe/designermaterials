@@ -3,8 +3,9 @@
 // container (preview, document properties, configuration names, embedded Parasolid partitions), Siemens NX parts (their
 // Parasolid partitions), Inventor, Fusion and FreeCAD archives, the JT table of contents, the Parasolid text header and
 // ACIS SAT topology points. Nothing here evaluates a B-rep: each reader states exactly what it recovered, and the
-// Parasolid streams it unpacks are translated elsewhere (xt.js).
+// Parasolid and ShapeManager streams it unpacks are translated elsewhere (xt.js, sat.js).
 import * as F from './formats.js';
+import { findACIS, readSAT } from './sat.js';
 
 const { min, max, abs, hypot } = Math;
 const latin = (b, o, n) => { let s = ''; for (let i = o, e = min(b.length, o + n); i < e; i++) s += String.fromCharCode(b[i]); return s; };
@@ -134,6 +135,40 @@ export function swStreams(bytes) {
 // Parasolid transmit file. Returned only when the inflated data carries the Parasolid transmit signature.
 function swPartition(d) { if (!d || d.length < 40) return null; for (const o of [28, 24, 32, 20, 36]) { if ((d[o] & 0x0F) !== 8 || ((d[o] << 8) | d[o + 1]) % 31) continue; try { const r = F.inflateRaw(d, o + 2).data; if (/^PS\0\0\0.: TRANSMIT FILE|^\*\*ABCDEFGHIJKLM/.test(latin(r, 0, 40))) return r; } catch (e) { /* not at this offset */ } } return null; }
 const wideStrings = (d, minLen = 3, limit = 400) => { const out = []; let cur = ''; for (let i = 0; i + 1 < d.length && out.length < limit; i += 2) { const c = d[i] | (d[i + 1] << 8); if (c >= 32 && c < 0xD800 && c !== 0x7F && (c < 0x80 || c > 0xA0)) cur += String.fromCharCode(c); else { if (cur.length >= minLen) out.push(cur); cur = ''; if (d[i + 1] !== 0 && d[i] === 0) i--; } } if (cur.length >= minLen) out.push(cur); return out; };
+// The component instance tree of an assembly → {name, bbox (metres) | null, files: [path], components: [{name, instance,
+// path: [names from the top], depth, file, type, configuration, configurationId, suppressed, hidden, virtual,
+// matrix: 3 × 4 row-major acting on column vectors (metres) | null}]}. Every model (the assembly and each sub-assembly)
+// lists its own swReference children; a reference carries a 4 × 4 "swTransform" whose first three rows are the rotation
+// acting on row vectors and whose fourth row is the translation (p' = p · R + t) relative to the model that owns it.
+// Sub-assemblies are expanded here, so each part instance comes out with its placement in the top assembly.
+export function swInstanceTree(xml) {
+  if (!/<swReference\b/.test(xml)) return null;
+  const at = (tag, k) => { const m = new RegExp('\\b' + k + '="([^"]*)"').exec(tag); return m ? xmlText(m[1]) : ''; }, files = new Map(), models = new Map(); let cur = null;
+  for (const m of xml.matchAll(/<swFile\b[^>]*>|<swModel\b[^>]*>|<\/swModel>|<swReference\b[^>]*>/g)) {
+    const tag = m[0];
+    if (tag.startsWith('<swFile')) files.set(at(tag, 'id'), { path: at(tag, 'swPath'), type: at(tag, 'swDocType') });
+    else if (tag === '</swModel>') cur = null;
+    else if (tag.startsWith('<swModel')) { const mo = { name: at(tag, 'swName'), file: at(tag, 'swFileRef'), bbox: at(tag, 'swBoundingBox').trim().split(/\s+/).map(Number), refs: [] }; models.set(at(tag, 'id'), mo); cur = /\/>$/.test(tag) ? null : mo; }
+    else if (cur) {
+      const a = at(tag, 'swTransform').trim().split(/\s+/).map(Number); let matrix = null;
+      if (a.length === 16 && a.every(Number.isFinite) && abs(a[3]) + abs(a[7]) + abs(a[11]) < 1e-9) { const sc = a[15] > 0 ? a[15] : 1; matrix = [a[0] * sc, a[4] * sc, a[8] * sc, a[12], a[1] * sc, a[5] * sc, a[9] * sc, a[13], a[2] * sc, a[6] * sc, a[10] * sc, a[14]]; }
+      cur.refs.push({ name: at(tag, 'swName'), instance: +at(tag, 'swReferenceNumber') || 1, model: at(tag, 'swModelRef'), configuration: at(tag, 'swConfigurationName'), configurationId: at(tag, 'swConfigurationId'), suppressed: at(tag, 'swSuppressed') === 'YES', hidden: at(tag, 'swHidden') === 'YES', virtual: at(tag, 'swIsVirtualComponent') === 'YES', matrix });
+    }
+  }
+  let top = null; for (const m of xml.matchAll(/<swConfiguration\b[^>]*>/g)) if (!top || /swMostRecentConfiguration="YES"/.test(m[0])) top = models.get(at(m[0], 'swModelRef')) || top;
+  if (!top) { const used = new Set(); for (const mo of models.values()) for (const r of mo.refs) used.add(r.model); for (const [id, mo] of models) if (mo.refs.length && !used.has(id)) top = mo; }
+  if (!top) return null;
+  const components = [], walk = (mo, M, path, off, depth) => {
+    if (depth > 24) return;
+    for (const r of mo.refs) {
+      const child = models.get(r.model), file = child ? files.get(child.file) : null, here = r.matrix ? (M ? matMul(M, r.matrix) : r.matrix) : null, gone = off || r.suppressed, p = [...path, `${r.name}<${r.instance}>`];
+      if (child && child.refs.length && child !== mo) { walk(child, M === null && path.length ? null : here, p, gone, depth + 1); continue; }
+      components.push({ name: r.name, instance: r.instance, path: p, depth, file: file ? file.path : '', type: file ? file.type : '', configuration: r.configuration, configurationId: r.configurationId, suppressed: gone, hidden: r.hidden, virtual: r.virtual, matrix: path.length && M === null ? null : here });
+    }
+  };
+  walk(top, null, [], false, 0);
+  return { name: top.name, bbox: top.bbox.length === 6 && top.bbox.every(Number.isFinite) ? top.bbox : null, files: [...new Set(components.map(c => c.file).filter(Boolean))], components };
+}
 export function parseSolidWorks(bytes) {
   const b = F.toBytes(bytes), recovered = [], notRecovered = [], extra = {}, meta = {}; let get, names;
   if (startsWith(b, [0xD0, 0xCF, 0x11, 0xE0])) { const d = cfbDocument(b, 'SOLIDWORKS (OLE2 layout, 2014 and earlier)'); Object.assign(meta, d.meta); recovered.push(...d.recovered); Object.assign(extra, d.extra); names = d.cfb.entries.filter(e => e.type === 'stream').map(e => e.path); get = n => d.cfb.read(n); meta.layout = 'OLE2 compound file (SOLIDWORKS 2014 and earlier)'; }
@@ -154,6 +189,8 @@ export function parseSolidWorks(bytes) {
   if (hd) { const seen = new Set(); for (let i = 0; i + 6 < hd.length; i++) if (hd[i] === 0xFF && hd[i + 1] === 0xFE && hd[i + 2] === 0xFF) { const n = hd[i + 3]; if (n && i + 4 + 2 * n <= hd.length) { const s = utf16(hd, i + 4, 2 * n); if (/^[^\x00-\x1f]+$/.test(s) && !seen.has(s)) { seen.add(s); cfgNames.push(s); } i += 3 + 2 * n; } } }
   if (cfgNames.length || cfgIdx.length) { meta.configurations = cfgNames.length ? cfgNames : cfgIdx.map(i => `configuration ${i} (name not readable)`); recovered.push(`${meta.configurations.length} configuration(s): ${meta.configurations.slice(0, 12).join(', ')}`); }
   const kw = names.includes('swXmlContents/KeyWords') ? text('swXmlContents/KeyWords') : ''; if (kw) { const feats = [...kw.matchAll(/<(?:swFeature|Feature)\b[^>]*\b(?:Name|name)="([^"]+)"/g)].map(m => xmlText(m[1])); if (feats.length) { meta.featureNames = feats.slice(0, 200); recovered.push(`${feats.length} feature and item names from the keyword index (names only — no parameters or sketches)`); } }
+  // assembly structure: the component instance tree SOLIDWORKS writes as XML (files, configurations, placements, extents)
+  if (names.includes('swXmlContents/COMPINSTANCETREE')) { const asm = swInstanceTree(text('swXmlContents/COMPINSTANCETREE')); if (asm && asm.components.length) { extra.assembly = asm; meta.components = asm.components.slice(0, 200).map(c => `${c.path.join(' / ')} → ${c.file || 'virtual component'}${c.configuration ? ` [${c.configuration}]` : ''}${c.suppressed ? ' (suppressed)' : ''}`); recovered.push(`assembly structure: ${asm.components.length} part instance(s) (sub-assemblies expanded) of ${asm.files.length} referenced file(s) with their placement transforms (${asm.files.slice(0, 8).map(f => f.split(/[\\/]/).pop()).join(', ')}${asm.files.length > 8 ? ', …' : ''})`); } }
   // embedded Parasolid bodies
   const embedded = []; for (const n of names.filter(x => /(^|\/)Config-\d+-Partition$/.test(x))) { const ps = swPartition(get(n)); if (ps) { const info = parasolidInfo(ps), c = /Config-(\d+)/.exec(n)[1]; embedded.push({ name: `configuration-${c}.x_b`, mime: 'application/octet-stream', format: 'parasolid', bytes: ps, description: `Parasolid ${info.encoding} transmit${info.partition ? ' (partition)' : ''} of configuration ${c}${cfgNames[+c] ? ` "${cfgNames[+c]}"` : ''}, modeller version ${info.modellerVersion || 'unknown'}, schema ${info.schema || 'unknown'}`, ...info }); } }
   if (embedded.length) { extra.embedded = embedded; meta.parasolid = embedded.map(e => e.description); recovered.push(`${embedded.length} embedded Parasolid body stream(s) unpacked intact (${embedded.map(e => `${e.name}: ${e.bytes.length} bytes, ${e.schema || 'schema not read'}`).join('; ')}) — the exact B-rep of the part in Parasolid partition form, kept for saving`); }
@@ -171,7 +208,21 @@ export function parseOleCad(bytes, product) {
   if (product === 'Inventor') {
     const seg = d.cfb.entries.filter(e => /RSeStorage\//.test(e.path) && e.type === 'stream'); if (seg.length) d.meta.segments = seg.length;
     const info = d.cfb.find(/RSeDbRevisionInfo$|RSeDb$/)[0], s = info ? wideStrings(d.cfb.read(info), 6, 60).filter(x => /Schema|Saved|Build|\d{4} \(/.test(x)) : []; if (s.length) { d.meta.revisionInfo = s.slice(0, 8); d.recovered.push(`save history — ${s.slice(0, 4).join('; ')}`); }
-    notRecovered.push('the model segments (B-rep, graphics, browser, design-view data) are stored in Inventor\'s proprietary segment encoding, whose B-rep part is an Autodesk ShapeManager (ACIS-derived) body: not decoded');
+    // files this document references (the parts and sub-assemblies of an assembly, a derived part's base): full paths in UFRxDoc
+    const ufr = d.cfb.entries.find(e => e.type === 'stream' && e.name === 'UFRxDoc'), ud = ufr ? d.cfb.read(ufr) : null;
+    if (ud) { const refs = []; for (const off of [0, 1]) for (const m of utf16(ud, off, ud.length - off).matchAll(/(?:[A-Za-z]:\\|\\\\)[^\x00-\x1f"*<>?|:]{1,240}?\.(?:ipt|iam)/gi)) { const pth = m[0]; if (!/\\Templates\\/i.test(pth) && !refs.includes(pth)) refs.push(pth); }
+      const own = refs.length ? refs[0] : ''; const others = refs.slice(1); if (own) d.meta.savedAs = own; if (others.length) { d.extra.references = others; d.meta.references = others.slice(0, 200); d.recovered.push(`${others.length} referenced file(s): ${others.slice(0, 8).map(x => x.split(/[\\/]/).pop()).join(', ')}${others.length > 8 ? ', …' : ''}`); } }
+    // model segments: "M…" meta streams name each segment, the "B…" stream of the same key holds its data as one zlib stream
+    const segs = inventorSegments(d.cfb), found = [];
+    if (segs.length) { d.meta.segmentNames = segs.map(g => `${g.name} (${g.data.length} bytes${g.inflated ? ' inflated' : ''})`); d.recovered.push(`${segs.length} model segment(s) unpacked: ${segs.map(g => g.name).join(', ')}`); }
+    for (const g of segs) for (const h of findACIS(g.data)) found.push({ ...h, segment: g.name, brep: /b-?rep/i.test(g.name), bytes: g.data.subarray(h.offset) });
+    const use = found.some(f => f.brep) ? found.filter(f => f.brep) : found, aside = found.length - use.length;
+    if (use.length) {
+      d.extra.embedded = use.map((f, i) => ({ name: `brep-${i + 1}.sab`, mime: 'application/octet-stream', format: 'acis', bytes: f.bytes, segment: f.segment, description: `Autodesk ShapeManager binary B-rep ("${f.signature}") ${i + 1} of ${use.length} from segment ${f.segment}` }));
+      d.meta.shapeManager = d.extra.embedded.map(e => e.description);
+      d.recovered.push(`${use.length} ShapeManager (ACIS-derived) B-rep stream(s) located in ${[...new Set(use.map(f => f.segment))].join(', ')}${aside ? `; ${aside} further stream(s) in other segments (sketch and construction geometry) left aside` : ''}`);
+    } else notRecovered.push(segs.length ? 'no ShapeManager B-rep stream was found in the model segments' : 'the model segments could not be unpacked (no meta / data stream pairs in the layout this reader knows): no B-rep located');
+    notRecovered.push('the feature tree, sketches, parameters, browser, graphics and design-view segments are stored in Inventor\'s proprietary object serialisation and were not interpreted');
   } else {
     if (product === 'Solid Edge') { const found = []; for (const e of d.cfb.entries) if (e.type === 'stream' && e.size > 512) { const data = d.cfb.read(e); if (data) for (const f of findParasolid(data)) if (f.guise !== 'deltas') found.push({ ...f, stream: e.path.replace(/[\x00-\x1f]/g, '·') }); }
       if (found.length) { d.extra.embedded = found.map((f, i) => ({ name: `parasolid-${i + 1}.x_b`, mime: 'application/octet-stream', format: 'parasolid', bytes: f.bytes, description: `Parasolid binary transmit (${f.guise}) from stream "${f.stream}", modeller version ${f.modellerVersion}, schema ${f.schema || 'unknown'}`, encoding: f.encoding, partition: f.partition, modellerVersion: f.modellerVersion, schema: f.schema })); d.recovered.push(`${found.length} embedded Parasolid stream(s) located by signature`); } }
@@ -181,15 +232,42 @@ export function parseOleCad(bytes, product) {
   return { meta: d.meta, recovered: d.recovered, notRecovered, extra: d.extra, geometry: null };
 }
 
+// Inventor model segments → [{name, key, data, inflated}]. A meta stream "M<key>" carries the segment name; the data
+// stream "B<key>" is a short header followed by one zlib stream (older releases store the data raw).
+export function inventorSegments(cfb) {
+  const out = [];
+  for (const e of cfb.entries) {
+    if (e.type !== 'stream' || !/(^|\/)RSeStorage\/B[^/]*$/.test(e.path) || e.size < 8) continue;
+    const key = e.name.slice(1), me = cfb.entries.find(x => x.type === 'stream' && x.path === e.path.slice(0, e.path.length - e.name.length) + 'M' + key); let name = '';
+    if (me) { const m = cfb.read(me); if (m) { const t = latin(m, 0, min(m.length, 512)).replace(/\0/g, ''), q = /[A-Za-z][A-Za-z0-9]{1,40}Segment/.exec(t); if (q) name = q[0]; } }
+    const d = cfb.read(e); if (!d) continue; let data = null;
+    for (let i = 0; i < min(64, d.length - 2) && !data; i++) if (d[i] === 0x78 && (d[i + 1] === 0x01 || d[i + 1] === 0x5E || d[i + 1] === 0x9C || d[i + 1] === 0xDA)) { try { const r = F.inflateRaw(d, i + 2); if (r.data.length > 0) data = r.data; } catch (err) { data = null; } }
+    out.push({ name: name || `segment ${key.slice(0, 8)}`, key, data: data || d, inflated: !!data });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- Autodesk Fusion (.f3d / .f3z)
 export function parseFusion(bytes) {
-  const b = F.toBytes(bytes), all = F.unzip(b, /\.(png|jpe?g)$|(^|\/)(Manifest|Properties)\.dat$/i), recovered = [], notRecovered = [], extra = {}, meta = { entries: all.length };
+  const b = F.toBytes(bytes), WANT = /\.(png|jpe?g|smb|smbh|smt|sab|sat|f3d)$|(^|\/)(Manifest|Properties)\.dat$/i, all = F.unzip(b, WANT), recovered = [], notRecovered = [], extra = {}, meta = { entries: all.length };
   const breps = all.filter(e => /\.(smb|smbh|smt|sab|sat)$/i.test(e.name)), imgs = all.filter(e => e.data && /\.(png|jpe?g)$/i.test(e.name) && sniffImage(e.data, 0)).sort((a, c) => c.size - a.size), nested = all.filter(e => /\.f3d$/i.test(e.name));
   meta.archiveEntries = all.slice(0, 60).map(e => `${e.name} (${e.size} bytes)`); recovered.push(`archive listing: ${all.length} entries`);
   if (imgs.length) { extra.preview = preview(sniffImage(imgs[0].data, 0), `archive entry "${imgs[0].name}"`); recovered.push(describePreview(extra.preview)); }
   const man = all.find(e => e.data && /Manifest\.dat$/i.test(e.name)); if (man) { const s = wideStrings(man.data, 4, 40).concat((latin(man.data, 0, min(man.data.length, 65536)).match(/[\x20-\x7e]{6,}/g) || []).slice(0, 40)); if (s.length) meta.manifestStrings = [...new Set(s)].slice(0, 30); }
   if (nested.length) { meta.components = nested.map(e => e.name); recovered.push(`${nested.length} nested design archive(s) (.f3z assembly): ${nested.slice(0, 8).map(e => e.name).join(', ')}`); }
-  if (breps.length) { meta.brepSegments = breps.map(e => `${e.name} (${e.size} bytes)`); recovered.push(`${breps.length} B-rep segment(s) located: ${breps.slice(0, 6).map(e => e.name).join(', ')}`); notRecovered.push('the B-rep segments are Autodesk ShapeManager binary (.smb / .smbh, an ACIS derivative): they are located and sized, but no open kernel reads them, so no geometry was reconstructed'); }
+  // B-rep blobs: a ".smbh" blob holds the current bodies of one component followed by their roll-back history; the ".smb"
+  // blobs beside it hold sketch profiles and base-feature bodies, and are the design itself only when no .smbh exists
+  // (direct-modelling designs). A .f3z holds one archive per component document.
+  const blobs = []; let aside = 0, zstd = 0;
+  const collect = (entries, owner) => { zstd += entries.filter(e => !e.data && e.method === 93 && /\.(smb|smbh|smt)$/i.test(e.name)).length; const hist = entries.filter(e => e.data && /\.smbh$/i.test(e.name)), cur = entries.filter(e => e.data && /\.(smb|smt|sab|sat)$/i.test(e.name)), use = hist.length ? hist : cur; if (hist.length) aside += cur.length; for (const e of use) blobs.push({ name: e.name, owner, data: e.data }); };
+  collect(all, '');
+  for (const n of nested.slice(0, 64)) { if (!n.data) continue; let inner = []; try { inner = F.unzip(n.data, /\.(smb|smbh|smt|sab|sat)$/i); } catch (e) { inner = []; } collect(inner, n.name); }
+  const good = blobs.filter(q => findACIS(q.data.subarray(0, min(q.data.length, 64))).some(h => h.offset === 0) || /^\s*\d{3,5}\s+\d+\s+\d+\s+\d+/.test(latin(q.data, 0, 40)));
+  if (breps.length) { meta.brepSegments = breps.map(e => `${e.name} (${e.size} bytes)`); recovered.push(`${breps.length} B-rep entr${breps.length === 1 ? 'y' : 'ies'} located: ${breps.slice(0, 6).map(e => e.name.split('/').pop()).join(', ')}`); }
+  if (good.length) { extra.embedded = good.map((q, i) => ({ name: `${q.name.split('/').pop()}`, mime: 'application/octet-stream', format: 'acis', bytes: q.data, component: q.owner, unitScale: 10, description: `Autodesk ShapeManager B-rep ${i + 1} of ${good.length}${q.owner ? ` of component archive ${q.owner}` : ''} (${q.name.split('/').pop()}, ${q.data.length} bytes)` })); meta.shapeManager = extra.embedded.map(e => e.description); recovered.push(`${good.length} ShapeManager (ACIS-derived) B-rep stream(s) unpacked intact${aside ? `; ${aside} further .smb blob(s) holding sketch profiles and base-feature bodies left aside` : ''}`); }
+  else if (zstd) notRecovered.push(`the ${zstd} B-rep entr${zstd === 1 ? 'y is' : 'ies are'} stored with Zstandard compression (zip method 93, used by recent Fusion releases), which this reader does not inflate: the ShapeManager data was not unpacked`);
+  else if (breps.length || nested.length) notRecovered.push('the B-rep entries did not unpack to ShapeManager binary data with a known signature');
+  if (zstd && good.length) notRecovered.push(`${zstd} further B-rep entr${zstd === 1 ? 'y is' : 'ies are'} stored with Zstandard compression (zip method 93), which this reader does not inflate: those bodies are missing`);
   else notRecovered.push('no B-rep segment entries were recognised in the archive');
   notRecovered.push('the design history (timeline, sketches, parameters, joints) is stored in Fusion\'s proprietary serialisation and was not interpreted');
   return { meta, recovered, notRecovered, extra, geometry: null };
@@ -265,22 +343,90 @@ export function parseNX(bytes) {
   return { meta, recovered, notRecovered, extra, geometry: null };
 }
 
+// ---------------------------------------------------------------- XZ / LZMA2 (JT 10 segment compression)
+// unxz(bytes, start) → Uint8Array: the blocks of one .xz stream, each a chain with the single LZMA2 filter.
+export function unxz(bytes, start = 0, limit = 1 << 30) {
+  const b = F.toBytes(bytes); let o = start; const fail = m => { throw new Error('xz: ' + m); };
+  if (!startsWith(b, [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00], o)) fail('missing stream signature'); const check = b[o + 7] & 15, checkSize = check === 0 ? 0 : check < 4 ? 4 : check < 7 ? 8 : check < 10 ? 16 : check < 13 ? 32 : 64; o += 12;
+  const vli = () => { let x = 0, sh = 0; for (let i = 0; i < 9; i++) { const c = b[o++]; x += (c & 127) * 2 ** sh; sh += 7; if (!(c & 128)) return x; } fail('bad integer'); };
+  let out = new Uint8Array(65536), n = 0; const need = k => { if (n + k > limit) fail('output larger than allowed'); if (n + k > out.length) { const g = new Uint8Array(max(out.length * 2, n + k)); g.set(out.subarray(0, n)); out = g; } };
+  // LZMA state (probabilities are reset on request of each chunk)
+  let lc = 0, lp = 0, pb = 0, probs = null, state = 0, r0 = 0, r1 = 0, r2 = 0, r3 = 0, range = 0, code = 0, dictStart = 0;
+  const IS_MATCH = 0, IS_REP = 192, IS_G0 = 204, IS_G1 = 216, IS_G2 = 228, IS_R0L = 240, SLOT = 432, SPEC = 688, ALIGN = 802, LEN = 818, RLEN = 1332, LIT = 1846;
+  const reset = () => { probs = new Uint16Array(LIT + (0x300 << (lc + lp))).fill(1024); state = 0; r0 = r1 = r2 = r3 = 0; };
+  const bit = i => { const pr = probs[i], bound = (range >>> 11) * pr; let r; if ((code >>> 0) < bound) { range = bound; probs[i] = pr + ((2048 - pr) >> 5); r = 0; } else { range = (range - bound) >>> 0; code = (code - bound) >>> 0; probs[i] = pr - (pr >> 5); r = 1; } if (range < 16777216) { range = (range << 8) >>> 0; code = ((code << 8) | b[o++]) >>> 0; } return r; };
+  const tree = (base, bits) => { let m = 1; for (let i = 0; i < bits; i++) m = (m << 1) | bit(base + m); return m - (1 << bits); };
+  const rtree = (base, bits) => { let m = 1, sym = 0; for (let i = 0; i < bits; i++) { const q = bit(base + m); m = (m << 1) | q; sym |= q << i; } return sym; };
+  const direct = bits => { let r = 0; for (let i = 0; i < bits; i++) { range >>>= 1; let q = 0; if ((code >>> 0) >= range) { code = (code - range) >>> 0; q = 1; } r = (r * 2) + q; if (range < 16777216) { range = (range << 8) >>> 0; code = ((code << 8) | b[o++]) >>> 0; } } return r; };
+  const length = (base, ps) => (bit(base) === 0 ? tree(base + 2 + ps * 8, 3) : bit(base + 1) === 0 ? 8 + tree(base + 130 + ps * 8, 3) : 16 + tree(base + 258, 8)) + 2;
+  const lzma = (unpacked, end) => {
+    range = 0xFFFFFFFF; code = 0; o++; for (let i = 0; i < 4; i++) code = ((code << 8) | b[o++]) >>> 0; const stop = n + unpacked; need(unpacked);
+    while (n < stop) {
+      if (o > end + 8) fail('compressed chunk overrun'); const pos = n - dictStart, ps = pos & ((1 << pb) - 1);
+      if (bit(IS_MATCH + (state << 4) + ps) === 0) {
+        const prev = pos > 0 ? out[n - 1] : 0, base = LIT + 0x300 * (((pos & ((1 << lp) - 1)) << lc) + (prev >> (8 - lc))); let sym = 1;
+        if (state >= 7) { let mb = out[n - r0 - 1]; do { const q = (mb >> 7) & 1; mb <<= 1; const x = bit(base + ((1 + q) << 8) + sym); sym = (sym << 1) | x; if (q !== x) break; } while (sym < 256); }
+        while (sym < 256) sym = (sym << 1) | bit(base + sym);
+        out[n++] = sym & 255; state = state < 4 ? 0 : state < 10 ? state - 3 : state - 6; continue;
+      }
+      let len;
+      if (bit(IS_REP + state) === 0) {
+        r3 = r2; r2 = r1; r1 = r0; len = length(LEN, ps); state = state < 7 ? 7 : 10; const slot = tree(SLOT + (min(len - 2, 3) << 6), 6);
+        if (slot < 4) r0 = slot; else { const nb = (slot >> 1) - 1; r0 = (2 | (slot & 1)) * 2 ** nb; if (slot < 14) r0 += rtree(SPEC + r0 - slot - 1, nb); else { r0 += direct(nb - 4) * 16; r0 += rtree(ALIGN, 4); } if (r0 >= 0xFFFFFFFF) fail('unexpected end marker'); }
+      } else {
+        if (bit(IS_G0 + state) === 0) { if (bit(IS_R0L + (state << 4) + ps) === 0) { if (n - dictStart < 1) fail('corrupt data'); state = state < 7 ? 9 : 11; out[n] = out[n - r0 - 1]; n++; continue; } }
+        else { let dist; if (bit(IS_G1 + state) === 0) dist = r1; else { if (bit(IS_G2 + state) === 0) dist = r2; else { dist = r3; r3 = r2; } r2 = r1; } r1 = r0; r0 = dist; }
+        len = length(RLEN, ps); state = state < 7 ? 8 : 11;
+      }
+      if (r0 >= n - dictStart) fail('distance beyond the data decoded so far'); if (n + len > stop) fail('match runs past the chunk');
+      for (let i = 0, src = n - r0 - 1; i < len; i++) out[n++] = out[src++];
+    }
+  };
+  for (let blk = 0; blk < 4096 && o < b.length && b[o] !== 0; blk++) {
+    const h0 = o, hs = (b[o] + 1) * 4, flags = b[o + 1]; o += 2; if (flags & 3) fail('filter chains other than a single LZMA2 filter are not supported'); if (flags & 0x40) vli(); if (flags & 0x80) vli(); if (vli() !== 0x21) fail('filter is not LZMA2'); o = h0 + hs;
+    let propsSet = false; dictStart = n;
+    for (let g = 0; g < 1e7; g++) {
+      const c = b[o++]; if (c === undefined) fail('unexpected end of data'); if (c === 0) break;
+      if (c === 1 || c === 2) { const len = ((b[o] << 8) | b[o + 1]) + 1; o += 2; if (c === 1) dictStart = n; need(len); out.set(b.subarray(o, o + len), n); n += len; o += len; continue; }
+      if (c < 0x80) fail('bad LZMA2 control byte');
+      const unpacked = (((c & 31) << 16) | (b[o] << 8) | b[o + 1]) + 1, packed = ((b[o + 2] << 8) | b[o + 3]) + 1, mode = (c >> 5) & 3; o += 4;
+      if (mode >= 2) { let d = b[o++]; if (d > 224) fail('bad LZMA properties'); lc = d % 9; d = (d - lc) / 9; lp = d % 5; pb = (d - lp) / 5; propsSet = true; } if (mode === 3) dictStart = n; if (mode >= 1) { if (!propsSet) fail('LZMA chunk before its properties'); reset(); } else if (!probs) fail('LZMA chunk without a state');
+      const end = o + packed; lzma(unpacked, end); o = end;
+    }
+    o = h0 + Math.ceil((o - h0) / 4) * 4 + checkSize;
+  }
+  return out.subarray(0, n);
+}
+
 // ---------------------------------------------------------------- JT (ISO 14306)
 const JT_SEG = { 1: 'logical scene graph', 2: 'JT B-rep', 3: 'PMI data', 4: 'meta data', 6: 'shape', 7: 'shape LOD 0', 8: 'shape LOD 1', 9: 'shape LOD 2', 10: 'shape LOD 3', 11: 'shape LOD 4', 12: 'shape LOD 5', 13: 'shape LOD 6', 14: 'shape LOD 7', 15: 'shape LOD 8', 16: 'shape LOD 9', 17: 'XT B-rep (Parasolid)', 18: 'wireframe representation', 20: 'ULP', 24: 'LWPA', 30: 'MultiXT B-rep', 31: 'InfoSegment', 33: 'STEP B-rep' };
 export function parseJT(bytes) {
-  const b = F.toBytes(bytes), v = dv(b), head = latin(b, 0, 80), m = /^Version (\d+)\.(\d+)\s*JT/.exec(head); if (!m) throw new Error('JT: missing "Version n.n JT" header');
-  const major = +m[1], meta = { version: `${m[1]}.${m[2]}`, header: head.trim().replace(/\s+/g, ' ') }, recovered = [`JT version ${meta.version}`], notRecovered = [], le = b[80] === 0; meta.byteOrder = le ? 'little-endian' : 'big-endian';
+  const b = F.toBytes(bytes), v = dv(b), head = latin(b, 0, 80), m = /^Version (\d+)\.(\d+)(?:\s*JT|\s{8})/.exec(head); if (!m) throw new Error('JT: missing "Version n.n JT" header');
+  const major = +m[1], meta = { version: `${m[1]}.${m[2]}`, header: head.trim().replace(/\s+/g, ' ') }, recovered = [`JT version ${meta.version}`], notRecovered = [], extra = {}, le = b[80] === 0; meta.byteOrder = le ? 'little-endian' : 'big-endian';
   try {
     const wide = major >= 10, toc = wide ? Number(v.getBigUint64(85, le)) : v.getInt32(85, le); if (!(toc > 0 && toc + 4 <= b.length)) throw new Error('table of contents offset outside the file');
     const n = v.getInt32(toc, le), es = wide ? 16 + 8 + 4 + 4 : 16 + 4 + 4 + 4; if (!(n >= 0 && n < 1e6 && toc + 4 + n * es <= b.length)) throw new Error('table of contents does not fit in the file');
-    const counts = {}, sizes = {}; let lods = 0, tri = 0;
-    for (let i = 0; i < n; i++) { const o = toc + 4 + i * es, len = v.getInt32(o + (wide ? 24 : 20), le), attr = v.getUint32(o + (wide ? 28 : 24), le), type = attr >>> 24, name = JT_SEG[type] || `segment type ${type}`; counts[name] = (counts[name] || 0) + 1; sizes[name] = (sizes[name] || 0) + max(0, len); if (type >= 6 && type <= 16) { lods++; tri += max(0, len); } }
+    const counts = {}, sizes = {}, xt = []; let lods = 0, tri = 0, xtSegs = 0, lzma = 0;
+    for (let i = 0; i < n; i++) {
+      const o = toc + 4 + i * es, so = wide ? Number(v.getBigUint64(o + 16, le)) : v.getInt32(o + 16, le), len = v.getInt32(o + (wide ? 24 : 20), le), attr = v.getUint32(o + (wide ? 28 : 24), le), type = attr >>> 24, name = JT_SEG[type] || `segment type ${type}`; counts[name] = (counts[name] || 0) + 1; sizes[name] = (sizes[name] || 0) + max(0, len); if (type >= 6 && type <= 16) { lods++; tri += max(0, len); }
+      // XT B-rep segments carry a Parasolid transmit stream, stored raw or zlib-deflated behind the segment header: found by signature
+      if ((type === 17 || type === 30) && so > 0 && len > 24 && so + len <= b.length) {
+        xtSegs++; let data = b.subarray(so, so + len), packed = false;
+        // segment header (id, type, length), then compression flag 2, compressed length and algorithm 2 (zlib) or 3 (LZMA)
+        if (len > 40 && (v.getInt32(so + 24, le) === 2 || v.getInt32(so + 24, le) === 3)) { const algo = b[so + 32]; if (algo === 2 && b[so + 33] === 0x78) { try { data = F.inflateRaw(b, so + 35).data; packed = true; } catch (e) { data = b.subarray(so, so + len); } } else if (algo === 3 && b[so + 33] === 0xFD && b[so + 34] === 0x37) { try { data = unxz(b, so + 33, 4e8); packed = true; } catch (e) { lzma++; continue; } } }
+        for (const f of findParasolid(data)) if (f.guise !== 'deltas') xt.push({ ...f, compressed: packed || f.compressed, segment: xtSegs, kind: name });
+      }
+    }
+    if (xt.length) { extra.embedded = xt.map((f, i) => ({ name: `xt-brep-${i + 1}.x_b`, mime: 'application/octet-stream', format: 'parasolid', bytes: f.bytes, description: `Parasolid binary transmit (${f.guise}) ${i + 1} of ${xt.length} from JT ${f.kind} segment ${f.segment}, modeller version ${f.modellerVersion}, schema ${f.schema || 'unknown'}${f.compressed ? ', stored deflated' : ''}`, encoding: f.encoding, partition: f.partition, modellerVersion: f.modellerVersion, schema: f.schema })); meta.parasolid = extra.embedded.map(e => e.description); recovered.push(`${xt.length} Parasolid transmit stream(s) unpacked from ${xtSegs} XT B-rep segment(s) — the exact B-rep of the parts, each in its own part coordinates`); }
+    else if (xtSegs) notRecovered.push(`${xtSegs} XT B-rep segment(s) are present but no Parasolid transmit stream could be unpacked from them`);
+    if (lzma) notRecovered.push(`${lzma} LZMA-compressed XT B-rep segment(s) could not be inflated: their Parasolid data was not unpacked`);
     meta.segments = n; meta.segmentCounts = counts; meta.segmentBytes = sizes;
     recovered.push(`table of contents: ${n} data segments — ${Object.entries(counts).map(([k, c]) => `${c} × ${k} (${sizes[k]} bytes)`).join(', ')}`);
     if (lods) notRecovered.push(`${lods} tessellated shape / LOD segment(s) (${tri} bytes) are present but were not decoded: JT shape data use quantised, entropy-coded vertex and topology streams whose decoder is not implemented here`);
-    if (counts[JT_SEG[2]] || counts[JT_SEG[17]] || counts[JT_SEG[30]] || counts[JT_SEG[33]]) notRecovered.push('the exact B-rep segments (JT B-rep / Parasolid XT / STEP) were inventoried but not extracted or evaluated');
+    if (counts[JT_SEG[2]] || counts[JT_SEG[33]]) notRecovered.push('the JT B-rep / STEP B-rep segments were inventoried but not decoded');
+    if (xt.length) notRecovered.push('the logical scene graph (assembly structure, instance placements, names, materials) was not decoded: bodies are not placed by their instance transforms, and a part instanced several times appears once');
   } catch (e) { notRecovered.push(`the table of contents could not be read (${e.message}): only the version string is reported`); }
-  return { meta, recovered, notRecovered, extra: {}, geometry: null };
+  return { meta, recovered, notRecovered, extra, geometry: null };
 }
 
 // ---------------------------------------------------------------- Parasolid transmit files (.x_t / .x_b)
@@ -320,6 +466,53 @@ export function parseSAT(bytes) {
   meta.vertexBoundingBox = { min: lo, max: hi, note: 'bounding box of the topological vertices only: curved faces can extend beyond it' };
   recovered.push(`vertex bounding box ${lo.map(x => +x.toPrecision(6)).join(', ')} → ${hi.map(x => +x.toPrecision(6)).join(', ')} ${meta.unitScale_mm ? 'mm' : 'file units'} (vertices only: curved faces can extend beyond it)`);
   return { meta, recovered, notRecovered, extra: {}, geometry: { kind: 'lattice', nodes, edges, radius: 0, units: meta.unitScale_mm ? 'mm' : '', wireframe: true, pointCloud: !edges.length, notes, lost: [] } };
+}
+
+// ---------------------------------------------------------------- CATIA V5 and PTC Creo: container facts and preview only
+// Complete JPEG images embedded anywhere in a file → [{offset, bytes, width, height}] (marker segments walked to the frame header and to the end marker)
+export function findJPEG(bytes, limit = 16) {
+  const b = F.toBytes(bytes), out = [];
+  for (let i = 0; i + 12 < b.length && out.length < limit; i++) {
+    if (b[i] !== 0xFF || b[i + 1] !== 0xD8 || b[i + 2] !== 0xFF || b[i + 3] < 0xC0) continue;
+    let p = i + 2, w = 0, h = 0, okay = false;
+    for (let g = 0; g < 256 && p + 4 <= b.length && b[p] === 0xFF; g++) { const mk = b[p + 1], len = (b[p + 2] << 8) | b[p + 3]; if (mk >= 0xC0 && mk <= 0xC2 && p + 9 <= b.length) { h = (b[p + 5] << 8) | b[p + 6]; w = (b[p + 7] << 8) | b[p + 8]; } if (mk === 0xDA) { okay = w > 0 && h > 0; break; } if (len < 2) break; p += 2 + len; }
+    if (!okay) continue; let e = -1; for (let q = p; q + 1 < b.length && q < p + 2e7; q++) if (b[q] === 0xFF && b[q + 1] === 0xD9) { e = q + 2; break; } if (e < 0) continue;
+    out.push({ offset: i, bytes: b.subarray(i, e), width: w, height: h }); i = e - 1;
+  }
+  return out;
+}
+const WHY_CATIA = 'no geometry: the part body is held in the CGMGeom / CATMFBRP containers in the binary encoding of Dassault\'s CGM kernel, for which no public description exists, and the display cache (CATSeeBodyCont / CATCGRCont) uses an equally undocumented mix of packed 2-D and 3-D primitive records — neither can be decoded to faces that could be checked, so nothing is reconstructed';
+export function parseCatia(bytes) {
+  const b = F.toBytes(bytes), recovered = [], notRecovered = [], extra = {}, meta = { container: 'CATIA V5 "V5_CFV2" container' }; if (latin(b, 0, 7) !== 'V5_CFV2') throw new Error('CATIA: missing V5_CFV2 signature');
+  const names = new Map(); { const CH = 1 << 20; for (let o = 0; o < b.length; o += CH) { const t = latin(b, o, CH + 64); for (const m of t.matchAll(/CAT[A-Za-z0-9]{3,30}Cont(?:ainer)?(?![A-Za-z])|CGMGeom|CATMFBRP|CATGEO3D/g)) names.set(m[0], (names.get(m[0]) || 0) + 1); } }
+  if (names.size) { meta.containers = [...names.keys()].sort(); recovered.push(`${names.size} internal container names: ${meta.containers.slice(0, 16).join(', ')}${names.size > 16 ? ', …' : ''}`); meta.hasGeometryContainer = names.has('CGMGeom'); meta.hasDisplayCache = names.has('CATCGRCont') || names.has('CATSeeBodyCont'); }
+  const imgs = findJPEG(b).sort((x, y) => y.bytes.length - x.bytes.length); if (imgs.length) { extra.preview = { mime: 'image/jpeg', bytes: imgs[0].bytes, source: `an embedded JPEG image at byte ${imgs[0].offset}`, displayable: true, width: imgs[0].width, height: imgs[0].height }; recovered.push(describePreview(extra.preview)); } else notRecovered.push('no preview image was found');
+  notRecovered.push(WHY_CATIA, 'the specification tree, sketches, parameters, PMI and material are stored as serialised CATIA feature objects and were not interpreted');
+  return { meta, recovered, notRecovered, extra, geometry: null };
+}
+const WHY_CREO = 'no geometry: the model sections listed in the table of contents (solid tables, feature data, display data) are stored in PTC\'s proprietary compressed encoding, for which no public description exists; no neutral or tessellated stream that could be decoded and checked is present, so nothing is reconstructed';
+export function parseCreo(bytes) {
+  const b = F.toBytes(bytes), head = latin(b, 0, min(b.length, 65536)), recovered = [], notRecovered = [], extra = {}, meta = {}; if (!head.startsWith('#UGC:')) throw new Error('Creo: missing #UGC header');
+  const h1 = /^#UGC:(\d+)\s+(\w+)\s+(\d+)\s+(\d+)/.exec(head); if (h1) { meta.headerVersion = +h1[1]; meta.objectType = h1[2].toLowerCase(); meta.releaseCode = +h1[3]; meta.minimumReleaseCode = +h1[4]; }
+  for (const [k, key] of [['MACH', 'platform'], ['CMNM', 'originalName'], ['HOST', 'host']]) { const m = new RegExp('#- ' + k + ' +([^\\\\\\r\\n]*?)\\s*\\\\').exec(head); if (m && m[1].trim()) meta[key] = m[1].trim().replace(/^[0-9a-f]{3}/, ''); }
+  const rel = /#((?:Creo|Pro\/ENGINEER|Wildfire)[^\r\n]{0,90})/.exec(head); if (rel) meta.release = rel[1].replace(/\s+/g, ' ').trim();
+  recovered.push(`${meta.release || 'PTC model file'}${meta.objectType ? `, ${meta.objectType}` : ''}${meta.originalName ? `, saved as ${meta.originalName}` : ''}${meta.platform ? ` on ${meta.platform.replace(/^_/, '')}` : ''}`);
+  const toc = []; for (const m of head.matchAll(/(?:^|\n)((?:ND:\d+:)?[A-Za-z][\w]{2,60})(?::\d+)? ([0-9a-f]{1,8}) ([0-9a-f]{1,8}) ([0-9a-f]{1,8}) [0-9a-f]+ [0-9a-f]+ [0-9a-f]+ [0-9a-f]+ [0-9a-f]+#/g)) toc.push({ name: m[1].replace(/^ND:\d+:/, ''), offset: parseInt(m[2], 16), stored: parseInt(m[3], 16), size: parseInt(m[4], 16) });
+  if (toc.length) { meta.sections = toc.slice(0, 120).map(t => `${t.name} (${t.stored} bytes stored, ${t.size} expanded)`); recovered.push(`table of contents: ${toc.length} model sections (${toc.slice(0, 8).map(t => t.name).join(', ')}${toc.length > 8 ? ', …' : ''})`); }
+  const imgs = findJPEG(b).sort((x, y) => y.width * y.height - x.width * x.height); if (imgs.length) { extra.preview = { mime: 'image/jpeg', bytes: imgs[0].bytes, source: `an embedded JPEG image at byte ${imgs[0].offset} (${imgs.length} view thumbnail(s) in the file)`, displayable: true, width: imgs[0].width, height: imgs[0].height }; recovered.push(describePreview(extra.preview)); } else notRecovered.push('no preview image was found');
+  notRecovered.push(WHY_CREO, 'features, sketches, parameters, relations and annotations were not interpreted');
+  return { meta, recovered, notRecovered, extra, geometry: null };
+}
+
+// ---------------------------------------------------------------- ACIS SAB / ShapeManager binary
+// Header and record inventory of a binary save file (the B-rep itself is translated by sat.js).
+export function parseSAB(bytes) {
+  const m = readSAT(F.toBytes(bytes)), meta = { signature: m.signature, version: m.version / 100, product: m.product, acis: m.acis, date: m.date, unitScale_mm: m.scale, resabs: m.resabs, records: m.entities.size }, recovered = [], notRecovered = [];
+  meta.entityCounts = Object.fromEntries(Object.entries(m.counts).sort((a, c) => c[1] - a[1]).slice(0, 40));
+  recovered.push(`${m.signature} save file, version ${meta.version}${m.product ? ` written by ${m.product}` : ''}${m.acis ? ` (${m.acis})` : ''}${m.date ? `, ${m.date}` : ''}`);
+  recovered.push(`record inventory — ${Object.entries(meta.entityCounts).slice(0, 14).map(([k, c]) => `${k}: ${c}`).join(', ')}`);
+  if (m.history) notRecovered.push('the roll-back history section that follows the model was not read');
+  return { meta, recovered, notRecovered, extra: {}, geometry: null };
 }
 
 // ---------------------------------------------------------------- Unix compress (.Z, LZW) — used for .stp.Z

@@ -1,6 +1,6 @@
 // Offline support. The application shell and every suite are cached on install and refreshed in the background;
 // live reference data is cached per request so the latest answers remain available without a connection.
-const VERSION = '15138b726162';
+const VERSION = 'e5b12e8936a1';
 const SHELL = 'dm-shell-' + VERSION, LIVE = 'dm-live-v1';
 const LIVE_HOSTS = ['api.openalex.org', 'api.crossref.org', 'www.ebi.ac.uk', 'zenodo.org', 'api.datacite.org', 'alexandria.icams.rub.de', 'optimade.odbx.science', 'nomad-lab.eu', 'pubchem.ncbi.nlm.nih.gov', 'en.wikipedia.org', 'api.github.com', 'api.worldbank.org', 'api.frankfurter.dev', 'api.carbonintensity.org.uk', 'api.db.nomics.world'];
 const FEEDS = ['https://api.frankfurter.dev/v1/latest?base=EUR&symbols=USD', 'https://api.carbonintensity.org.uk/intensity', ...['PZINC', 'PCOPP', 'PALUM', 'PNICK', 'PTIN', 'PGOLD', 'PSILVER', 'PPLAT', 'PCOBA', 'PLITH'].map(c => `https://api.db.nomics.world/v22/series/IMF/PCPS/M.W00.${c}.USD?observations=1`)];

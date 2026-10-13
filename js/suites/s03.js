@@ -453,6 +453,15 @@ function latticeE(pt, st) {   // energy per atom (eV) as a function of nearest-n
   const sh = shells(st), phi = pairPhi(pt);
   return d => { let e = 0; const s = sh.s, w = sh.w; for (let i = 0; i < s.length; i++) e += w[i] * phi(d * s[i]); if (pt.type === 'lj') { const Rc = sh.R * d, rho = 1 / (sh.vAtom * d ** 3); e += 4 * PI * rho * 4 * pt.e * (pt.r ** 12 / (9 * Rc ** 9) - pt.r ** 6 / (3 * Rc ** 3)); } return e / 2; };
 }
+// Quasi-harmonic zero-point energy per atom (eV) as a function of nearest-neighbour distance: the Einstein frequency follows exactly from the
+// lattice sum, m ω_E² = ⅓ Σ_R [φ″(R) + 2φ′(R)/R]; a Debye-shaped spectrum with that second moment has ⟨ω⟩ = ¾√(5/3) ω_E, so
+// E_zp = (3/2)ħ⟨ω⟩ = (9/8) k_B Θ_D with Θ_D = √(5/3) ħω_E/k_B. No adjustable constant.
+function zeroPointE(pt, st) {
+  const sh = shells(st), phi = pairPhi(pt), mKg = pt.mass * 1.66053907e-27;
+  const wE = d => { let k = 0; const s = sh.s, w = sh.w; for (let i = 0; i < s.length; i++) { const r = d * s[i], h = 1e-3 * r, a = phi(r - h), b = phi(r), c = phi(r + h); k += w[i] * ((a - 2 * b + c) / (h * h) + (c - a) / (h * r)); } return Math.sqrt(Math.max(k, 0) / 3 * N.Q_E * 1e20 / mKg); };   // rad/s
+  const E = d => 1.5 * 0.75 * Math.sqrt(5 / 3) * N.HBAR * wE(d) / N.Q_E;
+  return { wE, E };
+}
 const birch = (p, V) => { const [E0, V0, B0, Bp] = p, f = (V0 / V) ** (2 / 3); return E0 + 9 * V0 * B0 / 16 * ((f - 1) ** 3 * Bp + (f - 1) ** 2 * (6 - 4 * f)); };
 function eosFit(E, vAtom, dGuess) {
   const scan = N.linspace(0.45 * dGuess, 1.6 * dGuess, 47), iMin = N.argmin(scan.map(E));
@@ -540,6 +549,9 @@ function runPotential(inp) {
   if (pt.type === 'morse' && pt.al * pt.r < 2.2) warnings.push('αr₀ is small: the Morse potential is very long-ranged, the lattice sum is cut at 9.5 neighbour distances and may not be converged.');
   const res = {}; for (const s of ['fcc', 'bcc', 'hcp']) res[s] = eosFit(latticeE(pt, s), shells(s).vAtom, dG);
   const r = res[st], [E0, V0, B0, Bp] = r.p, a0 = latConst(st, Math.cbrt(V0 / shells(st).vAtom)), Ec = -E0, B = B0 * EVA3_GPA, rho = pt.mass * 1.66053907e-27 / (V0 * 1e-30), best = ['fcc', 'bcc', 'hcp'].reduce((b, s) => (res[s].E0 < res[b].E0 ? s : b));
+  // zero-point (quantum) correction: E(V) = static lattice energy + quasi-harmonic zero-point energy, refitted
+  const zp = zeroPointE(pt, st), Est = latticeE(pt, st), rq = eosFit(d => Est(d) + zp.E(d), shells(st).vAtom, r.d0), aQ = latConst(st, Math.cbrt(rq.p[1] / shells(st).vAtom)), EcQ = -rq.p[0], BQ = rq.p[2] * EVA3_GPA;
+  const Ezp0 = zp.E(rq.d0), thetaD = Math.sqrt(5 / 3) * N.HBAR * zp.wE(rq.d0) / N.K_B, deBoer = 2 * PI * N.HBAR / (pt.r * 1e-10 * Math.sqrt(pt.mass * 1.66053907e-27 * pt.e * N.Q_E)), zpFrac = Ezp0 / Math.max(Ec, 1e-12);
   const ex = POT[pk] && st === POT[pk].st ? POT[pk] : null, phi = pairPhi(pt), rr = N.linspace(0.8 * dG, 2.6 * dG, 150);
   const aGrid = r.ds.map(d => latConst(st, d)), fitE = r.ds.map(d => birch(r.p, shells(st).vAtom * d ** 3));
   checks.push(chk('Birch–Murnaghan fit quality', r.rms < 1e-3 * Math.abs(E0) + 1e-9, `rms residual ${F(r.rms, 2)} eV/atom over ±2 % in lattice parameter (${r.it} Levenberg–Marquardt iterations)`),
@@ -547,17 +559,25 @@ function runPotential(inp) {
   if (pt.type === 'lj') checks.push(chk('LJ fcc reduced constants', st !== 'fcc' || (Math.abs(r.d0 / pt.r - 1.0902) < 2e-3 && Math.abs(E0 / pt.e + 8.610) < 0.01), `d₀/σ = ${F(r.d0 / pt.r, 5)} (1.0902), E/ε = ${F(E0 / pt.e, 5)} (−8.610) for the static fcc crystal${st !== 'fcc' ? ' — applies to fcc only' : ''}`));
   if (ex) checks.push(chk('Lattice parameter within 3 % of experiment', Math.abs(a0 - ex.a) / ex.a < 0.03, `${F(a0, 5)} Å vs ${ex.a} Å`));
   warnings.push('Central pair potentials satisfy the Cauchy relation C₁₂ = C₄₄ and give an unrelaxed vacancy formation energy equal to the cohesive energy, both wrong for real metals; they are qualitative for metals and unsuitable for covalent solids and oxides.');
-  if (pt.type === 'lj') warnings.push('Static lattice without zero-point motion: for argon the zero-point energy (≈ 10 % of the binding) accounts for most of the difference from the measured cohesive energy and lattice parameter.');
+  if (zpFrac > 0.02) warnings.push(`Zero-point motion matters for this crystal: the zero-point energy is ${F(100 * zpFrac, 3)} % of the static binding energy. The static lattice is ${F(100 * (aQ - a0) / aQ, 3)} % too small and its bulk modulus ${F(100 * (B - BQ) / BQ, 3)} % too high compared with the zero-point-corrected values (${F(aQ, 5)} Å, ${F(BQ, 4)} GPa), which are the ones to compare with low-temperature measurements${pk === 'Ar' ? ' — for argon this quantum correction, not a defect of the pair potential, explains the +19 % bulk modulus and −1.2 % lattice parameter of the static model' : ''}.`);
+  if (zpFrac > 0.25) warnings.push('The zero-point energy exceeds a quarter of the binding energy (strongly quantum solid, as for neon, hydrogen or helium parameters): the quasi-harmonic correction is then only qualitative.');
+  if (ex && pt.type !== 'lj') warnings.push('The experimental values listed for metals are room-temperature data; thermal expansion (about 0.3–0.6 % in lattice parameter at 300 K) is not modelled.');
   if (best !== st) warnings.push(`With this potential the ${best} structure is lower in energy than ${st} by ${F((res[st].E0 - res[best].E0) * 1000, 3)} meV/atom; pair potentials cannot reliably rank close-packed polytypes.`);
   const defc = { name: `${pk} ${st}`, formula: POT[pk] ? pk : 'Ar', system: st === 'hcp' ? 'hexagonal' : 'cubic', a: a0, b: a0, c: st === 'hcp' ? a0 * Math.sqrt(8 / 3) : a0, alpha: 90, beta: 90, gamma: st === 'hcp' ? 120 : 90, basis: (st === 'fcc' ? [[0, 0, 0], [0, .5, .5], [.5, 0, .5], [.5, .5, 0]] : st === 'bcc' ? [[0, 0, 0], [.5, .5, .5]] : [[1 / 3, 2 / 3, 0.25], [2 / 3, 1 / 3, 0.75]]).map(f => ({ el: POT[pk] ? pk : 'Ar', f })) };
   const geo = A.supercell(A.buildCell(defc), [3, 3, 3]);
-  const cmp = [['Lattice parameter a (Å)', +a0.toFixed(4), ex ? ex.a : '–', ex ? +(100 * (a0 - ex.a) / ex.a).toFixed(2) : '–'], ['Cohesive energy (eV/atom)', +Ec.toFixed(4), ex ? ex.Ec : '–', ex ? +(100 * (Ec - ex.Ec) / ex.Ec).toFixed(2) : '–'], ['Bulk modulus (GPa)', +B.toFixed(2), ex ? ex.B : '–', ex ? +(100 * (B - ex.B) / ex.B).toFixed(2) : '–']];
+  const cmp = [['Lattice parameter a (Å)', +a0.toFixed(4), ex ? ex.a : '–', ex ? +(100 * (a0 - ex.a) / ex.a).toFixed(2) : '–'], ['Cohesive energy (eV/atom)', +Ec.toFixed(4), ex ? ex.Ec : '–', ex ? +(100 * (Ec - ex.Ec) / ex.Ec).toFixed(2) : '–'], ['Bulk modulus (GPa)', +B.toFixed(2), ex ? ex.B : '–', ex ? +(100 * (B - ex.B) / ex.B).toFixed(2) : '–'],
+    ['Lattice parameter with zero-point motion (Å)', +aQ.toFixed(4), ex ? ex.a : '–', ex ? +(100 * (aQ - ex.a) / ex.a).toFixed(2) : '–'], ['Cohesive energy with zero-point motion (eV/atom)', +EcQ.toFixed(4), ex ? ex.Ec : '–', ex ? +(100 * (EcQ - ex.Ec) / ex.Ec).toFixed(2) : '–'], ['Bulk modulus with zero-point motion (GPa)', +BQ.toFixed(2), ex ? ex.B : '–', ex ? +(100 * (BQ - ex.B) / ex.B).toFixed(2) : '–']];
+  checks.push(chk('Zero-point correction small enough for the quasi-harmonic treatment', zpFrac < 0.25, `E_zp = ${F(Ezp0 * 1000, 4)} meV/atom = ${F(100 * zpFrac, 3)} % of the static binding energy; de Boer parameter h/(σ√(mε)) = ${F(deBoer, 3)}`));
   return {
-    summary: `${pt.name} lattice sum for the ${st} structure: equilibrium lattice parameter ${F(a0, 5)} Å, cohesive energy ${F(Ec, 4)} eV/atom and bulk modulus ${F(B, 4)} GPa (B′ = ${F(Bp, 3)}) from a third-order Birch–Murnaghan fit${ex ? `; experiment gives ${ex.a} Å, ${ex.Ec} eV/atom and ${ex.B} GPa` : ''}. Level of theory: static-lattice empirical pair potential summed to 9.5 neighbour distances.`,
+    summary: `${pt.name} lattice sum for the ${st} structure: equilibrium lattice parameter ${F(a0, 5)} Å, cohesive energy ${F(Ec, 4)} eV/atom and bulk modulus ${F(B, 4)} GPa (B′ = ${F(Bp, 3)}) from a third-order Birch–Murnaghan fit${ex ? `; experiment gives ${ex.a} Å, ${ex.Ec} eV/atom and ${ex.B} GPa` : ''}. With quasi-harmonic zero-point motion: ${F(aQ, 5)} Å, ${F(EcQ, 4)} eV/atom and ${F(BQ, 4)} GPa. Level of theory: empirical pair potential summed to 9.5 neighbour distances, static lattice plus a Debye-moment zero-point term.`,
     kpis: [
       kpi('a0', 'Equilibrium lattice parameter', a0, 'Å', `Minimum of the static lattice energy for ${st}${st === 'hcp' ? ' (ideal c/a = 1.633)' : ''}; nearest-neighbour distance ${F(r.d0, 5)} Å.${ex ? ` Measured value ${ex.a} Å.` : ''}`, ex ? Math.abs(a0 - ex.a) / ex.a < 0.03 : null),
       kpi('Ecoh', 'Cohesive energy', Ec, 'eV/atom', `Depth of the E(V) minimum: energy needed to separate the static crystal into isolated atoms${pt.type === 'lj' ? ` (= ${F(Ec / pt.e, 4)} ε)` : ''}.${ex ? ` Measured value ${ex.Ec} eV/atom.` : ''}`, ex ? Math.abs(Ec - ex.Ec) / ex.Ec < 0.15 : null),
       kpi('B0', 'Bulk modulus', B, 'GPa', `B₀ = V d²E/dV² at equilibrium from the Birch–Murnaghan fit.${ex ? ` Measured value ${ex.B} GPa.` : ''}`, ex ? Math.abs(B - ex.B) / ex.B < 0.25 : null),
+      kpi('a0_zp', 'Lattice parameter with zero-point motion', aQ, 'Å', `Minimum of static energy plus quasi-harmonic zero-point energy; the quantum expansion is ${F(100 * (aQ - a0) / a0, 3)} % relative to the static lattice.${ex ? ` Measured value ${ex.a} Å.` : ''} This is the 0 K value to compare with low-temperature diffraction.`, ex ? Math.abs(aQ - ex.a) / ex.a < 0.03 : null),
+      kpi('Ecoh_zp', 'Cohesive energy with zero-point motion', EcQ, 'eV/atom', `Static binding energy reduced by the zero-point energy of ${F(Ezp0 * 1000, 4)} meV/atom (Debye temperature ${F(thetaD, 4)} K from the lattice-sum Einstein frequency).${ex ? ` Measured value ${ex.Ec} eV/atom.` : ''}`, ex ? Math.abs(EcQ - ex.Ec) / ex.Ec < 0.15 : null),
+      kpi('B0_zp', 'Bulk modulus with zero-point motion', BQ, 'GPa', `Curvature of the zero-point-corrected E(V): the expanded lattice and the volume dependence of the phonon frequencies lower B by ${F(100 * (B - BQ) / Math.max(B, 1e-12), 3)} % relative to the static value.${ex ? ` Measured value ${ex.B} GPa.` : ''}`, ex ? Math.abs(BQ - ex.B) / ex.B < 0.25 : null),
+      kpi('theta_D', 'Debye temperature (lattice-sum estimate)', thetaD, 'K', 'Θ_D = √(5/3)·ħω_E/k_B, where the Einstein frequency ω_E is the exact second moment of the harmonic spectrum from the lattice sum; about 92 K is measured for solid argon. For metals a central pair potential gives only a rough value.'),
       kpi('Bp', 'Pressure derivative B′', Bp, '–', 'Third-order Birch–Murnaghan parameter dB/dP; typical solids lie between 4 and 8.'),
       kpi('V0', 'Atomic volume', V0, 'Å³', `Equilibrium volume per atom; static density ${F(rho, 4)} kg/m³ with an atomic mass of ${F(pt.mass, 5)} u.`),
       kpi('dE_struct', 'Energy difference to the most stable structure', (res[st].E0 - res[best].E0) * 1000, 'meV/atom', `Energy of ${st} relative to ${best}, the lowest of fcc, bcc and ideal hcp for this potential. Differences of a few meV are below the reliability of any pair model.`),
@@ -568,7 +588,7 @@ function runPotential(inp) {
       { key: 'phi', title: 'Pair potential', xlabel: 'r (Å)', ylabel: 'φ(r) (eV)', lines: [{ name: pt.type === 'lj' ? 'Lennard-Jones' : 'Morse', x: rr, y: rr.map(v => Math.min(phi(v), 2 * pt.e)) }], explain: 'Interaction energy of an isolated pair (clipped at 2ε on the repulsive wall). The crystal nearest-neighbour distance is slightly shorter than the pair minimum because more distant neighbours also attract.' },
     ],
     tables: [
-      { key: 'cmp', title: 'Model against experiment', columns: ['property', 'model', 'experiment', 'deviation (%)'], rows: cmp, explain: 'Static-lattice predictions compared with handbook values (room temperature for metals, low temperature for argon and sodium). Morse parameters were originally fitted to these same properties, so agreement there is a consistency check, not a prediction.' },
+      { key: 'cmp', title: 'Model against experiment', columns: ['property', 'model', 'experiment', 'deviation (%)'], rows: cmp, explain: 'Static-lattice and zero-point-corrected predictions compared with handbook values (room temperature for metals, low temperature for argon and sodium). For rare-gas solids the zero-point rows are the ones comparable with experiment. Morse parameters were originally fitted to these same properties, so agreement there is a consistency check, not a prediction.' },
       { key: 'struct', title: 'Structure comparison', columns: ['structure', 'a (Å)', 'E (eV/atom)', 'B (GPa)', 'ΔE (meV/atom)'], rows: ['fcc', 'bcc', 'hcp'].map(s => { const q = res[s]; return [s, +latConst(s, Math.cbrt(q.p[1] / shells(s).vAtom)).toFixed(4), +q.p[0].toFixed(5), +(q.p[2] * EVA3_GPA).toFixed(2), +((q.E0 - res[best].E0) * 1000).toFixed(3)]; }), explain: 'Equilibrium properties of the three simple metallic structures with the same potential; ΔE is relative to the most stable one.' },
     ],
     equations: [
@@ -576,6 +596,7 @@ function runPotential(inp) {
       eqn('governing', 'Static lattice energy', 'E(a) = ½ Σ_{R≠0} φ(|R|)  per atom'),
       eqn('constitutive', 'Birch–Murnaghan equation of state (third order)', 'E(V) = E₀ + (9V₀B₀/16){[(V₀/V)^⅔ − 1]³ B′ + [(V₀/V)^⅔ − 1]² [6 − 4(V₀/V)^⅔]}'),
       eqn('formula', 'Bulk modulus', 'B₀ = V (∂²E/∂V²) at V₀'),
+      eqn('governing', 'Zero-point (quasi-harmonic) correction', 'E(a) = E_static(a) + (9/8) k_B Θ_D(a),   k_B Θ_D = √(5/3) ħ ω_E,   m ω_E² = ⅓ Σ_{R≠0} [φ″(R) + 2φ′(R)/R]', `Debye spectrum with the exact second moment of the lattice; at equilibrium Θ_D = ${F(thetaD, 4)} K, E_zp = ${F(Ezp0 * 1000, 4)} meV/atom`),
     ],
     geometry: geomOf(geo), checks, warnings,
     recommendations: [
@@ -586,7 +607,7 @@ function runPotential(inp) {
     ],
     publish: { 'prop.lattice_a': a0 * 1e-10, 'prop.K': B * 1e9, 'prop.density': rho, 'struct.cohesive_eV': Ec, 'material.formula': POT[pk] ? pk : 'X' },
     exports: structExports(geo, slug(`${pk}_${st}_3x3x3`), ['cif', 'poscar', 'xyz', 'lammps']),
-    numerics: { method: 'Direct lattice summation over neighbour shells + golden-section minimisation + Levenberg–Marquardt Birch–Murnaghan fit', dof: 4, steps: 21, iterations: r.it, residual: r.rms, notes: `${shells(st).count} neighbours in ${shells(st).s.length} shells within 9.5 nearest-neighbour distances${pt.type === 'lj' ? '; analytic r⁻⁶/r⁻¹² tail correction' : ''}.` },
+    numerics: { method: 'Direct lattice summation over neighbour shells + golden-section minimisation + Levenberg–Marquardt Birch–Murnaghan fit (static and zero-point-corrected energy curves); Einstein frequency from the lattice sum of the pair-potential Laplacian', dof: 4, steps: 21, iterations: r.it, residual: r.rms, notes: `${shells(st).count} neighbours in ${shells(st).s.length} shells within 9.5 nearest-neighbour distances${pt.type === 'lj' ? '; analytic r⁻⁶/r⁻¹² tail correction' : ''}.` },
   };
 }
 
@@ -797,7 +818,7 @@ export default {
     { name: '(10,10) armchair carbon nanotube', note: 'Metallic single-wall tube, 1.36 nm diameter; exports a periodic cell.', values: { mode: 'nano', crystal: 'graphene', nshape: 'tube', tn: 10, tm: 10, Lnm: 5e-9 } },
     { name: 'Al-doped ZnO (AZO), 2 % Al', note: 'Donor doping of a transparent conducting oxide: Kröger–Vink reactions and Vegard shift.', values: { mode: 'defect', crystal: 'ZnO_wurtzite', dopant: 'Al3+', xdop: 2, T_C: 900 } },
     { name: 'La-doped SrTiO₃ perovskite', note: 'A-site donor doping with Goldschmidt tolerance-factor check. Schottky energy: 1.64 eV per defect for the full Schottky complex V_Sr + V_Ti + 3 V_O from density functional theory (Liu, Cooper, Xu, Xiao, Zhang & Weber, Phys. Chem. Chem. Phys. 16, 15590, 2014), i.e. 5 × 1.64 = 8.2 eV per formula unit of vacancies as this input requires; it gives a Schottky site fraction of about 2×10⁻⁶ at 1200 °C.', values: { mode: 'defect', crystal: 'SrTiO3', dopant: 'La3+', xdop: 5, T_C: 1200, Esch: 8.2 } },
-    { name: 'Argon Lennard-Jones crystal', note: 'Benchmark: a ≈ 5.25 Å, E_coh ≈ 0.09 eV/atom for the static fcc lattice.', values: { mode: 'potential', potModel: 'pair', pot: 'Ar', lattice: 'auto' } },
+    { name: 'Argon Lennard-Jones crystal', note: 'Benchmark: a ≈ 5.25 Å, E_coh ≈ 0.09 eV/atom for the static fcc lattice; 5.31 Å and 0.081 eV/atom with zero-point motion.', values: { mode: 'potential', potModel: 'pair', pot: 'Ar', lattice: 'auto' } },
     { name: 'NaCl lattice energy (Madelung, Born–Landé)', note: 'Ionic-model benchmark against the Born–Haber cycle.', values: { mode: 'potential', potModel: 'ionic', salt: 'NaCl', bornN: 0 } },
     { name: 'Ge on Si(001) heteroepitaxy', note: '4.2 % mismatch: critical thickness of about a nanometre.', values: { mode: 'epitaxy', film: 'Ge', substrate: 'Si', epiOri: 'direct', hfilm: 2e-8, T_C: 550 } },
     { name: 'Anatase TiO₂: Bragg angles and extinctions', note: 'Body-centred tetragonal cell with I-centring absences.', values: { mode: 'bragg', crystal: 'TiO2_anatase', rad: 'CuKa', h1: 1, k1: 0, l1: 1, h2: 0, k2: 0, l2: 4 } },
